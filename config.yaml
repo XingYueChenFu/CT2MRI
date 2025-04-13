@@ -8,6 +8,11 @@ isTrain: true # GAN_class.py需要（待优化）
 
 # ===== DATASET ===== 
 preload: true # 直接放入内存
+
+# 目前未实现不加载训练集的方法（test可无, train不可无）
+#（传入不划分的测试集到train_set也可以用evaluate()进行评估）
+need_validation: true # 是否将训练集划分为训练集和验证集
+validation_ratio: 0.1 # 验证集比例
 train_root: [
   # '/home/featurize/data/Task1/brain',
   # '/home/featurize/data/Task1/pelvis',
@@ -21,6 +26,7 @@ train_label: [
   # 1, # 尚未配准完
 ]
 
+need_test: false # 是否进行测试 # 不然不用加载test_root
 test_root: [ # [not implemented]
   '/home/featurize/data/Task1/brain', 
 ]
@@ -28,10 +34,6 @@ test_label: [
   0,
 ]
 
-need_validation: true # 是否将训练集划分为训练集和验证集
-validation_ratio: 0.1 # 验证集比例
-
-need_test: false # 是否进行测试 # 不然不用加载test_root
 
 # 忽略文件ID
 ignore_ids: [

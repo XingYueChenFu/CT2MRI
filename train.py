@@ -82,7 +82,6 @@ opt.gpu_ids = [0]
 opt.device = torch.device('cuda:{}'.format(opt.gpu_ids[0])) if opt.gpu_ids else torch.device('cpu')
 
 # 设置随机数种子
-
 np.random.seed(opt.seed)
 random.seed(opt.seed)
 torch.manual_seed(opt.seed)
@@ -95,7 +94,7 @@ torch.backends.cudnn.benchmark = True
 # headneck_train_dataloader = DataLoader(dataset=headneck_train_set, num_workers=opt.num_threads,batch_size=opt.batch_size, shuffle=True)
 # all_train_set = DatasetFromFolder_train(opt, region='All')
 # all_train_dataloader = DataLoader(dataset=all_train_set, num_workers=opt.num_threads, batch_size=opt.batch_size, shuffle=True)
-# ===== 兼容旧数据集 =====
+# ===== 兼容性数据集 =====
 headneck_train_set = CustomDatasetFromFolder_train(opt, region='brain')
 headneck_train_dataloader = DataLoader(dataset=headneck_train_set, num_workers=opt.num_threads,batch_size=opt.batch_size, shuffle=True)
 all_train_set = CustomDatasetFromFolder_train(opt, region='All')
