@@ -2,22 +2,24 @@ import argparse
 import os
 import numpy as np
 import time
+import yaml
 import pathlib
 from torch.utils.data import DataLoader
-from data.dataset import DatasetFromFolder_train
+from data.dataset import DatasetFromFolder_train, CustomDatasetFromFolder_train
 from util.Nii_utils import NiiDataRead
 from models.GAN_class import *
 from util.util import *
 from tensorboardX import SummaryWriter
 import random
 from skimage.metrics import structural_similarity, peak_signal_noise_ratio
+from tqdm import tqdm
 
 os.environ['PYTHONHASHSEED'] = '8'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 parser = argparse.ArgumentParser()
 
 # set base_options
-parser.add_argument("--image_dir", type=str, default='/home/DATASET', help="name of the dataset")
+parser.add_argument("--image_dir", type=str, default='/home/featurize/data', help="name of the dataset") # DEBUG
 parser.add_argument('--gpu', type=str, default='0', help='which gpu is used')
 parser.add_argument('--input_nc', type=int, default=1, help='# of input image channels: 3 for RGB and 1 for grayscale')
 parser.add_argument('--output_nc', type=int, default=1, help='# of output image channels: 3 for RGB and 1 for grayscale')
@@ -47,11 +49,17 @@ parser.add_argument('--epoch_count', type=int, default=1, help='the starting epo
 parser.add_argument('--phase', type=str, default='train', help='train, val, test, etc')
 parser.add_argument('--max_epochs', type=int, default=200, help='# max_epoch')
 parser.add_argument('--beta1', type=float, default=0.5, help='momentum term of adam')
+parser.add_argument('--beta2', type=float, default=0.999, help='momentum term of adam')
 parser.add_argument('--lr_max', type=float, default=0.0002, help='initial learning rate for adam')
 parser.add_argument('--gan_mode', type=str, default='vanilla', help='the type of GAN objective. [vanilla| lsgan ｜ wgangp]. vanilla GAN loss is the cross-entropy objective used in the original GAN paper.')
 parser.add_argument('--loss_pre_dir', type=str, default='perceive_loss/vgg19-dcbb9e9d.pth', help='resnet18_pretrain_path')
 parser.add_argument('--Max_CT', type=int, default=2000, help='Max_CT')
 parser.add_argument('--disx', type=int, default=10120, help='frequency of showing training results on console')  #10120,100000
+
+# opt['Max_CT'] = 1000
+# opt['depthSize'] = 8
+# opt['ImageSize'] = 256
+# opt['Npatch'] = 10
 
 opt = parser.parse_args()
 
@@ -83,10 +91,18 @@ torch.cuda.manual_seed(opt.seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
 
-headneck_train_set = DatasetFromFolder_train(opt, region='Headandneck')
+# headneck_train_set = DatasetFromFolder_train(opt, region='Headandneck')
+# headneck_train_dataloader = DataLoader(dataset=headneck_train_set, num_workers=opt.num_threads,batch_size=opt.batch_size, shuffle=True)
+# all_train_set = DatasetFromFolder_train(opt, region='All')
+# all_train_dataloader = DataLoader(dataset=all_train_set, num_workers=opt.num_threads, batch_size=opt.batch_size, shuffle=True)
+# ===== 兼容旧数据集 =====
+headneck_train_set = CustomDatasetFromFolder_train(opt, region='brain')
 headneck_train_dataloader = DataLoader(dataset=headneck_train_set, num_workers=opt.num_threads,batch_size=opt.batch_size, shuffle=True)
-all_train_set = DatasetFromFolder_train(opt, region='All')
+all_train_set = CustomDatasetFromFolder_train(opt, region='All')
 all_train_dataloader = DataLoader(dataset=all_train_set, num_workers=opt.num_threads, batch_size=opt.batch_size, shuffle=True)
+
+
+
 
 model = GANclass(opt)
 
@@ -99,9 +115,13 @@ val_writer = SummaryWriter(os.path.join(opt.checkpoints_dir, 'log/val'), flush_s
 best_MAE = 1000
 total_iters = 0
 early_stop_num = 0
-print('training')
+# print('training')
+print(f'\033[1;34m[INFO]\033[0m: training {opt.checkpoints_name}...')
+
+epoch_bar = tqdm(range(opt.epoch_count, opt.max_epochs + 1), desc='\033[1;34m[Train epoch]\033[0m', unit='epoch', position=0, leave=True)
 
 for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
+    
     epoch_start_time = time.time()  # timer for entire epoch
     iter_data_time = time.time()  # timer for data loading per iteration
 
@@ -116,8 +136,11 @@ for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for diffe
 
     train_size = len(train_dataloader)
     opt.print_freq = int(train_size / opt.print_freq_num)
-
-    for i, data in enumerate(train_dataloader):
+    
+    # 长为len(train_dataloader)
+    # batch_bar_train = tqdm(train_dataloader, desc='Batch', unit='batch', position=1, leave=False) # TODO 更新逻辑
+    batch_bar_train = tqdm(total=train_size, desc='\033[1;34m[Train batch]\033[0m', unit='batch', position=1, leave=False) # TODO 更新逻辑
+    for i, data in enumerate(train_dataloader):        
         iter_start_time = time.time()
         total_iters += 1
         epoch_iter += 1
@@ -150,10 +173,17 @@ for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for diffe
 
             train_iter_acc = []
             iter_num = 0
-
+        
         iter_data_time = time.time()
+        
+        batch_bar_train.set_description(f'Epoch {epoch}/{opt.max_epochs}')
+        batch_bar_train.set_postfix(MAE=np.mean(train_iter_acc))
+        batch_bar_train.update(1)
+        break # DEBUG
 
     update_learning_rate(model, opt.max_epochs, epoch, opt.lr_max)
+    batch_bar_train.close()
+    break # DEBUG
 
 
     '''***********************验证集*************************'''
@@ -195,6 +225,7 @@ for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for diffe
 
     if Val_run:
         with torch.no_grad():
+            batch_bar_val = tqdm(total=len(image_filenames), desc=f'\033[1;34m[Valuate]\033[0m', unit='batch', position=1, leave=False)
             for sub_index, sub in enumerate(image_filenames):
                 if 'Abdomen' in sub:
                     MR, spacing, origin, direction = NiiDataRead(
@@ -310,10 +341,15 @@ for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for diffe
                     np.mean(abdominal_val_MAE), np.mean(abdominal_val_SSIM), np.mean(abdominal_val_PSNR),
                     np.mean(epoch_val_MAE), np.mean(epoch_val_SSIM), np.mean(epoch_val_PSNR))
 
-                print(message)
+                # print(message)
+                tqdm.write(message)
                 with open(opt.file_name_txt, 'a') as opt_file:
                     opt_file.write(message)
                     opt_file.write('\n')
+                batch_bar_val.set_description(f'Epoch {epoch}/{opt.max_epochs}')
+                batch_bar_val.set_postfix(MAE=np.mean(epoch_val_MAE))
+                batch_bar_val.update(1)
+            batch_bar_val.close()
 
         epoch_val_MAE = np.mean(epoch_val_MAE)
         val_writer.add_scalar('val_MAE', epoch_val_MAE, epoch)
@@ -327,6 +363,12 @@ for epoch in range(opt.epoch_count, opt.max_epochs + 1):  # outer loop for diffe
         save_networks(opt, 'latest', model, epoch)
 
         print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.max_epochs, time.time() - epoch_start_time))
+    
+    # 更新epoch_bar
+    epoch_bar.set_description(f'Epoch {epoch}/{opt.max_epochs}')
+    epoch_bar.set_postfix(MAE=epoch_val_MAE, SSIM=np.mean(epoch_val_SSIM), PSNR=np.mean(epoch_val_PSNR))
+    epoch_bar.update(1)
+epoch_bar.close()
 
 train_writer.close()
 

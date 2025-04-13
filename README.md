@@ -1,4 +1,11 @@
-# MTT-Net: Multi-scale Tokens-Aware Transformer Network for Multi-region and Multi-sequence MR-to-CT Synthesis in A Single Model
+
+# MTT-Net
+用MTT-Net实现CT to MRI
+
+
+## 方法来源：
+[MTT-Net: Multi-scale Tokens-Aware Transformer Network for Multi-region and Multi-sequence MR-to-CT Synthesis in A Single Model](https://github.com/SMU-MedicalVision/MTT-Net)
+
 ## Experiments
 - CUDA/CUDNN
 - torch >=1.12.0

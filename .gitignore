@@ -1,0 +1,13 @@
+.ipynb_checkpoints/
+__pycache__/
+train_model/
+output/
+
+prompts.md
+
+*.pyc
+*.npy
+
+*.pth
+*.ckpt
+

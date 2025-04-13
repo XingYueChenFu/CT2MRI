@@ -33,8 +33,8 @@ class GANclass(nn.Module):
             self.BCELoss = torch.nn.BCELoss().to(self.device)
             if self.VGG_loss:
                 self.criterionPreLoss = VGGLoss_3D(opt.pretrain_model_path).to(self.device)
-            self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr_max, betas=(opt.beta1, 0.999))
-            self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr_max, betas=(opt.beta1, 0.999))
+            self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr_max, betas=(opt.beta1, opt.beta2))
+            self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr_max, betas=(opt.beta1, opt.beta2))
 
     def set_input(self, input):
         self.real_A = input['A'].to(self.device)

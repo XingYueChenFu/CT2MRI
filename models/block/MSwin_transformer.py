@@ -5,7 +5,8 @@ import numpy as np
 from torch.nn import init
 import functools
 import ml_collections
-from timm.models.layers import DropPath, trunc_normal_
+# from timm.models.layers import DropPath, trunc_normal_
+from timm.layers import DropPath, trunc_normal_
 
 class ShareSepConv3d(nn.Module):
     def __init__(self, kernel_size):

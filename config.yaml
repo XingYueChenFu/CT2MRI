@@ -1,0 +1,91 @@
+name: 'MTT-Net'
+
+use_seed: true
+seed: 42 # 随机种子
+
+phase: 'train' # 训练阶段
+isTrain: true # GAN_class.py需要（待优化）
+
+# ===== DATASET ===== 
+train_root: [
+  '/home/featurize/data/Task1/brain',
+  '/home/featurize/data/Task1/pelvis',
+]
+train_label: [
+  0,
+  1,
+]
+
+test_root: [ # [not implemented]
+  '/home/featurize/data/Task1/test_brain', 
+]
+test_label: [
+  0,
+]
+
+need_validation: true # 是否将训练集划分为训练集和验证集
+validation_ratio: 0.1 # 验证集比例
+
+need_test: false # 是否进行测试 # 不然不用加载test_root
+
+# 忽略文件ID
+ignore_ids: [
+  'overview',
+]
+
+start_slice: 30 # 切片开始的位置（默认从数据中间取，start_slice不为-1时，从start_slice开始取）
+target_depth_size: 32 # 数据切留的厚度
+target_image_size: 256 # 切片数据的H,W
+
+# ct窗位
+ct_window_level: 32
+ct_window_width: 80
+
+# ===== TRAINER ===== 
+gpu_ids: [0]
+num_workers: 4 # 线程数
+batch_size: 2 # 批量大小
+
+isTrain: true # 是否训练
+
+start_epoch: 0 # 从第几轮开始训练
+num_epochs: 201 # 训练总轮数
+
+input_nc: 1 # 输入通道数
+output_nc: 1 # 输出通道数
+G_model: 'MTTNET' # 生成器模型
+D_model: 'wave3DDiscriminator' # 判别器模型
+ngf: 16
+ndf: 16
+n_layers_D: 2 # only used if netD==n_layers
+G_norm: 'instance' # 生成器归一化方式
+D_norm: 'instance' # 判别器归一化方式
+init_type: 'normal' # 权重初始化方式
+init_gain: 0.02 # 权重初始化增益
+no_dropout: false # 是否使用dropout
+load_name: 'latest'
+
+# 超参数
+lambda_L1: 20
+VGG_loss: true # 是否使用VGG loss
+pretrain_model_path: 'perceive_loss/vgg19-dcbb9e9d.pth'
+beta1: 0.5 # Adam优化器参数
+beta2: 0.999 # Adam优化器参数
+lr_max: 0.0002 # 学习率
+gan_mode: 'vanilla' # GAN模式 [vanilla| lsgan ｜ wgangp] 如：vanilla: cross-entropy objective
+
+# 日志等需要的
+output_root: '/home/featurize/output' # 实际位置在 {log_dir}/{name}
+
+# 保留的原始参数（待优化）
+Npatch: 24
+print_freq_num: 4
+disx: 10120 # 10120,100000
+continue_train: false # 是否继续训练(由start_epoch决定)
+
+
+
+
+
+
+
