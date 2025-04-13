@@ -76,9 +76,12 @@ class Solver:
                 os.system(f'wget https://download.pytorch.org/models/vgg19-dcbb9e9d.pth -O {config["pretrain_model_path"]}')
             
         
-        # ===== 构造模型 =====
+        # ===== 构造模型等 =====
         tqdm.write(f'\033[1;34m[INFO]\033[0m Building model...')
         self.model = GANclass(self.opt) # GANclass使用的是argparse.Namespace
+        
+        self.ssim = SSIM(data_range=self.config['data_tange']).to(self.device)
+        self.psnr = PSNR(data_range=self.config['data_tange']).to(self.device)
         
         # ===== 加载模型 =====
         tqdm.write(f'\033[1;34m[INFO]\033[0m Loading model...')
@@ -87,13 +90,72 @@ class Solver:
     # TODO 加载模型的逻辑，没有模型时，从0开始训练
     def _load_model(self):
         pass
+    
+    def train(self):
+        best_SSIM = 0
         
+        tqdm.write(f'\n\033[1;34m[INFO]\033[0m Training...')
+        epoch_bar = tqdm(range(self.config['start_epoch'], self.config['max_epochs']), desc='Training Progress', unit='epoch', position=0, leave=True)
+        
+        self.start_time = time.time()
+        
+        for self.epoch in epoch_bar:
+            self.batch_bar = tqdm(range(len(self.train_loader)), desc='Batch Progress', unit='batch', position=1, leave=False)
+            for batch_idx, batch_data in enumerate(self.train_loader):
+                
+                # ===== 训练逻辑 =====
+                self.model.set_input(batch_data)
+                self.model.forward(self.epoch)
+                
+                # TODO
+                # # 计算损失
+                # losses = get_current_losses(self.model)
+                # self.loss_G = losses['G']
+                # self.loss_D = losses['D']
+                
+                # # 更新学习率
+                # update_learning_rate(self.model, self.config['max_epochs'], self.epoch, self.config['lr_max'])
+                
+                # 进度条
+                self.batch_bar.update(1)
+                break # DEBUG
+            self.batch_bar.close()
+            
+            # TODO 评估逻辑
+            if self.epoch % self.config['eval_interval'] == 0:
+                self.evaluate(self.train_loader)
+                self.evaluate(self.val_loader)
+                # 保存评估结果，保存最优模型，保存样本
+                
+                
+            # 进度条
+            epoch_bar.update(1)
+            break # DEBUG
+        epoch_bar.close()
+        pass
+    
+    def evaluate(self, dataloader):
+        # TODO 评估逻辑
+        # 初始化变量
+        batch_bar = tqdm(range(len(dataloader)), desc='Evaluation Progress', unit='batch', position=1, leave=False)
+        
+        for batch_idx, batch_data in enumerate(dataloader):
+            # 读取数据
+            self.model.set_input(batch_data)
+            self.model.forward(self.epoch)
+            
+            # 计算指标
+            # TODO
+            
+            # 进度条
+            batch_bar.update(1)
+        # 处理数据并返回
+        return
         
 
 
 if __name__ == '__main__':
-    # os.environ['PYTHONHASHSEED'] = '8' # python内置随机数种子
-    # os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # GPU与CPU同步
+    
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file')
@@ -101,13 +163,12 @@ if __name__ == '__main__':
 
     with open(opt.config, 'r') as f:
         config = yaml.safe_load(f)
+    
+    if config['use_seed']:
+        os.environ['PYTHONHASHSEED'] = config['seed'] # python内置随机数种子
+    # os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # GPU与CPU同步
 
     solver = Solver(config)
-    # for batch_idx, batch_data in enumerate(solver.train_loader):
-    #     print(f"Batch {batch_idx} A: {batch_data['A'].shape}") # ([2, 1, 256, 256, 32])
-    #     print(f"Batch {batch_idx} B: {batch_data['B'].shape}") # ([2, 1, 256, 256, 32])
-    #     print(f"Batch {batch_idx} mask: {batch_data['mask'].shape}")
-    #     print(f"Batch {batch_idx} label: {batch_data['label']}")
-    #     print()
-    #     # break
+    solver.train()
+
         

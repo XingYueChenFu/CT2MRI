@@ -64,6 +64,8 @@ init_type: 'normal' # 权重初始化方式
 init_gain: 0.02 # 权重初始化增益
 no_dropout: false # 是否使用dropout
 load_name: 'latest'
+data_tange: 255.0 # 目标输出数据的范围在0~255
+eval_interval: 10
 
 # 超参数
 lambda_L1: 20
@@ -80,7 +82,7 @@ output_root: '/home/featurize/output' # 实际位置在 {log_dir}/{name}
 # 保留的原始参数（待优化）
 Npatch: 24
 print_freq_num: 4
-disx: 10120 # 10120,100000
+disx: 10120 # 10120, 100000
 continue_train: false # 是否继续训练(由start_epoch决定)
 
 
