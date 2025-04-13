@@ -7,17 +7,22 @@ phase: 'train' # 训练阶段
 isTrain: true # GAN_class.py需要（待优化）
 
 # ===== DATASET ===== 
+preload: true # 直接放入内存
 train_root: [
-  '/home/featurize/data/Task1/brain',
-  '/home/featurize/data/Task1/pelvis',
+  # '/home/featurize/data/Task1/brain',
+  # '/home/featurize/data/Task1/pelvis',
+  '/home/featurize/data/Task1_N4BFC/brain',
+  # '/home/featurize/data/Task1_N4BFC/pelvis', # 尚未配准完
 ]
 train_label: [
-  0,
-  1,
+  # 0,
+  # 1,
+  0，
+  # 1, # 尚未配准完
 ]
 
 test_root: [ # [not implemented]
-  '/home/featurize/data/Task1/test_brain', 
+  '/home/featurize/data/Task1/brain', 
 ]
 test_label: [
   0,

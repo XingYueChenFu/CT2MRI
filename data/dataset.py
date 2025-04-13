@@ -254,11 +254,18 @@ class CustomDatasetFromFolder_train(data.Dataset):
 
 # ===== NEW =====
 import os
+import sys
+from typing import Dict, List, Tuple, Optional
+
 import numpy as np
+from tqdm import tqdm
+import nibabel as nib
+
 import torch
 from torch.utils.data import Dataset, random_split
-import nibabel as nib
-from typing import Dict, List, Tuple, Optional
+
+
+
 
 class MedicalDataset3D(Dataset):
     def __init__(self, config: Dict, mode: str = 'train'):
@@ -270,6 +277,7 @@ class MedicalDataset3D(Dataset):
             mode (str): One of 'train', 'val', or 'test'
         """
         self.config = config
+        self.preload = config['preload']
         self.mode = mode
         self.ignore_ids = set(self.config['ignore_ids'])
         self.target_depth = self.config['target_depth_size']
@@ -288,7 +296,31 @@ class MedicalDataset3D(Dataset):
         elif mode == 'test':
             for root, label in zip(self.config['test_root'], self.config['test_label']):
                 self._collect_data_from_root(root, label)
-    
+
+        if self.preload:
+            tqdm.write(f'\t\033[1;34m[INFO]\033[0m Preloading data into memory...')
+            # 加载数据到内存
+            self.data = []
+            path_bar = tqdm(total=len(self.data_paths), desc='\tPreloading data', unit='sample')
+            for idx, path in enumerate(self.data_paths):
+                label = self.labels[idx]
+                
+                ct = nib.load(os.path.join(path, 'ct.nii.gz')).get_fdata()
+                mr = nib.load(os.path.join(path, 'mr.nii.gz')).get_fdata()
+                mask = nib.load(os.path.join(path, 'mask.nii.gz')).get_fdata()
+                self.data.append(self._process_data(ct, mr, mask, label))
+                
+                path_bar.update(1)
+            path_bar.close()
+            
+            # 统计占用
+            for items in self.data: 
+                self.data_memory += sys.getsizeof(items)
+                for ele in items[:3]: # tensor管理的张量需要额外获取 
+                    self.data_memory += ele.element_size() * ele.nelement()
+            
+            tqdm.write(f'\t\033[1;34m[INFO]\033[0m Preloaded \033[34m{len(self.data_paths)}\033[0m samples. Total memory used: \033[34m{self.data_memory / (1024 * 1024):.2f} MB\033[0m')
+        
     def _collect_data_from_root(self, root: str, label: int):
         """Collect data paths from a root directory."""
         for folder in os.listdir(root):
@@ -308,49 +340,20 @@ class MedicalDataset3D(Dataset):
     def __len__(self) -> int:
         return len(self.data_paths)
     
+    
+    
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        folder_path = self.data_paths[idx]
-        label = self.labels[idx]
-        
-        # Load NIfTI files
-        ct = nib.load(os.path.join(folder_path, 'ct.nii.gz')).get_fdata()
-        mr = nib.load(os.path.join(folder_path, 'mr.nii.gz')).get_fdata()
-        mask = nib.load(os.path.join(folder_path, 'mask.nii.gz')).get_fdata()
-        
-        # Process CT with windowing
-        ct = self._normalize_ct(ct) # 调整窗口，然后放缩到0~255
-        
-        # Process MRI
-        mr = self._normalize_mr(mr) # 放缩到0~255
-        
-        # Process mask (ensure binary)
-        mask = (mask > 0).astype(np.float32)
-        
-        # Select slices and pad
-        ct = self._select_and_pad(ct)
-        mr = self._select_and_pad(mr)
-        mask = self._select_and_pad(mask)
-        
-        # Add channel dimension
-        ct = np.expand_dims(ct, axis=0)
-        mr = np.expand_dims(mr, axis=0)
-        mask = np.expand_dims(mask, axis=0)
-        # 由C,H,W,D变为C,D,H,W
-        ct = np.transpose(ct, (0, 3, 1, 2))
-        mr = np.transpose(mr, (0, 3, 1, 2))
-        mask = np.transpose(mask, (0, 3, 1, 2))
-        
-        # 转换为torch tensor
-        ct = torch.from_numpy(ct).float()
-        mr = torch.from_numpy(mr).float()
-        mask = torch.from_numpy(mask).float()
-        
-        # Convert label to one-hot if needed (assuming binary classification)
-        # if label != -1:  # -1 for test data without labels
-        #     label_tensor = torch.zeros(2)
-        #     label_tensor[label] = 1
-        # else:
-        #     label_tensor = torch.tensor(-1)  # Placeholder for test data
+        if self.preload:
+            ct, mr, mask, label = self.data[idx]
+        else:
+            folder_path = self.data_paths[idx]
+            label = self.labels[idx]
+            
+            ct = nib.load(os.path.join(folder_path, 'ct.nii.gz')).get_fdata()
+            mr = nib.load(os.path.join(folder_path, 'mr.nii.gz')).get_fdata()
+            mask = nib.load(os.path.join(folder_path, 'mask.nii.gz')).get_fdata()
+            
+            ct, mr, mask, label = self._process_data(ct, mr, mask, label)
         
         return {
             'A': ct,    # CT
@@ -358,6 +361,30 @@ class MedicalDataset3D(Dataset):
             'mask': mask,
             'label': label
         }
+    
+    def _process_data(self, ct, mr, mask, label):
+        ct =self._normalize_ct(ct)
+        mr = self._normalize_mr(mr)
+        mask = (mask > 0).astype(np.float32)
+        
+        ct = self._select_and_pad(ct)
+        mr = self._select_and_pad(mr)
+        mask = self._select_and_pad(mask)
+        
+        ct = np.expand_dims(ct, axis=0)
+        mr = np.expand_dims(mr, axis=0)
+        mask = np.expand_dims(mask, axis=0)
+        
+        ct = np.transpose(ct, (0, 3, 1, 2))
+        mr = np.transpose(mr, (0, 3, 1, 2))
+        mask = np.transpose(mask, (0, 3, 1, 2))
+        
+        ct = torch.from_numpy(ct).float()
+        mr = torch.from_numpy(mr).float()
+        mask = torch.from_numpy(mask).float()
+        
+        # label不做处理
+        return ct, mr, mask, label
     
     def _normalize_ct(self, ct: np.ndarray) -> np.ndarray:
         """Apply CT windowing (window level/width)."""

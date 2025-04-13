@@ -16,9 +16,9 @@ class GANclass(nn.Module):
         self.lambda_L1 = opt.lambda_L1
         self.G_model = opt.G_model
         if self.VGG_loss:
-            self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'D_loss', 'G_perceive','classification']
+            self.loss_names = ['G_GAN', 'G_L1', 'G_loss', 'D_real', 'D_fake', 'D_loss', 'G_perceive','classification']
         else:
-            self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'D_loss', 'classification']
+            self.loss_names = ['G_GAN', 'G_L1', 'G_loss', 'D_real', 'D_fake', 'D_loss', 'classification']
         self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, self.resolution, opt.G_model, opt.G_norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
 
@@ -42,8 +42,9 @@ class GANclass(nn.Module):
         self.mask = input['mask'].to(self.device)
         self.label = input['label'].to(self.device)
 
-    def forward(self,epoch):
-
+    def train_once(self):
+        # epoch参数没用，直接去掉更好
+        set_requires_grad(self.netG, True)
         self.fake_B, self.pre_label = self.netG(self.real_A)
 
         set_requires_grad(self.netD, True)
@@ -52,7 +53,7 @@ class GANclass(nn.Module):
         # calculate gradients for D
         """Calculate GAN loss for the discriminator"""
         # Fake; stop backprop to the generator by detaching fake_B
-        fake_AB = torch.cat((self.real_A, self.fake_B),1)  # we use conditional GANs; we need to feed both input and output to the discriminator
+        fake_AB = torch.cat((self.real_A, self.fake_B), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
         pred_fake = self.netD(fake_AB.detach(), isDetach=True)
         self.loss_D_fake = self.criterionGAN(pred_fake, False)
         # Real
@@ -86,15 +87,49 @@ class GANclass(nn.Module):
         self.loss_classification = self.BCELoss(self.pre_label, one_hot_key) + 0.01
         if self.VGG_loss:
             self.loss_G_perceive = self.criterionPreLoss(self.fake_B, self.real_B)
-            self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_G_perceive + self.loss_classification
+            self.loss_G_loss = self.loss_G_GAN + self.loss_G_L1 + self.loss_G_perceive + self.loss_classification
         else:
-            self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_classification
+            self.loss_G_loss = self.loss_G_GAN + self.loss_G_L1 + self.loss_classification
 
         # combine loss and calculate gradients
-        self.loss_G.backward()
+        self.loss_G_loss.backward()
         self.optimizer_G.step()  # udpate G's weights
 
+    # 兼容性代码，epoch原本就没用
+    # 不知道为什么命名为 forward()， 实际上就是训练一次
+    # 我将原来的forward改名为train_once了，将forward()改为调用train_once()
+    def forward(self, epoch=None): 
+        self.train_once(self)
+        
+    def eval_once(self):
+        with torch.no_grad():
+            # set G&D to eval mode
+            set_requires_grad(self.netG, False)
+            set_requires_grad(self.netD, False)
+            # generate fake_B
+            self.fake_B, self.pre_label = self.netG(self.real_A)
+            
+            fake_AB = torch.cat((self.real_A, self.fake_B), 1)  # we use conditional GANs; we need to feed both input and output to the discriminator
+            # loss D
+            pred_real = self.netD(fake_AB, isDetach=True)
+            self.loss_D_real = self.criterionGAN(pred_real, True)
+            self.loss_D_loss = (self.loss_D_fake + self.loss_D_real) * 0.5
+            # loss G
+            pred_fake = self.netD(fake_AB, isDetach=False)
+            self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+            self.loss_G_L1 = self.criterionL1(self.fake_B, self.real_B) * self.lambda_L1
+            
+            one_hot_key = torch.FloatTensor(self.label.size(0), 2).zero_().to(self.device)
+            idx = self.label.view(-1, 1)
+            one_hot_key = one_hot_key.scatter_(1, idx, 1)
 
+            self.loss_classification = self.BCELoss(self.pre_label, one_hot_key) + 0.01
+            if self.VGG_loss:
+                self.loss_G_perceive = self.criterionPreLoss(self.fake_B, self.real_B)
+                self.loss_G_loss = self.loss_G_GAN + self.loss_G_L1 + self.loss_G_perceive + self.loss_classification
+            else:
+                self.loss_G_loss = self.loss_G_GAN + self.loss_G_L1 + self.loss_classification
+        
 
 
 
