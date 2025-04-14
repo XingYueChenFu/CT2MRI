@@ -400,12 +400,12 @@ class MedicalDataset3D(Dataset):
         return ct.astype(np.float32)
     
     def _normalize_mr(self, mr: np.ndarray) -> np.ndarray:
-        """Normalize MRI to 0-255 range."""
+        """Normalize MRI to 0-1 range."""
         mr_min = mr.min()
         mr_max = mr.max()
         
         if mr_max != mr_min:
-            mr = (mr - mr_min) / (mr_max - mr_min) * 255.0
+            mr = (mr - mr_min) / (mr_max - mr_min)
         return mr.astype(np.float32)
     
     def _select_and_pad(self, volume: np.ndarray) -> np.ndarray:

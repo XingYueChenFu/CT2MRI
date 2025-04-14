@@ -1,10 +1,13 @@
 name: 'MTT-Net'
 
-use_seed: true
+# ====== 重要参数 ======
+use_seed: false
 seed: 42 # 随机种子
 
 phase: 'train' # 训练阶段
 isTrain: true # GAN_class.py需要（待优化）
+
+need_bugfree: true # 整活用私货，不需要请禁用
 
 # ===== DATASET ===== 
 preload: true # 直接放入内存
@@ -55,7 +58,7 @@ batch_size: 1 # 批量大小（量力而行。batch_size为1时，总消耗显�
 
 isTrain: true # 是否训练
 
-start_epoch: 0 # 从第几轮开始训练
+start_epoch: 0 # 从第几轮开始训练 # 当不是0时，会尝试读取上次训练的模型
 num_epochs: 201 # 训练总轮数
 
 input_nc: 1 # 输入通道数
@@ -71,7 +74,7 @@ init_type: 'normal' # 权重初始化方式
 init_gain: 0.02 # 权重初始化增益
 no_dropout: false # 是否使用dropout
 load_name: 'latest'
-data_tange: 255.0 # 目标输出数据的范围在0~255
+data_tange: 1.0 # 目标输出数据的范围在0~1
 eval_interval: 10
 
 # 超参数
@@ -93,6 +96,12 @@ disx: 10120 # 10120, 100000
 continue_train: false # 是否继续训练(由start_epoch决定)
 
 
+# ===== 整活 =====
+bugfree:
+  bugfree_img_path: '/home/featurize/work/CT2MRI-MTTNet/util/bugfree_img/' # bugfree图片路径
+  img_name: buddha.bugfree # bugfree图片名称 # buddha.buggfree
+  start_color: FF7EC7 # bugfree图片起始颜色
+  end_color: FFED46 # bugfree图片结束颜色
 
 
 

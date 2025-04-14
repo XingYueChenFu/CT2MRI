@@ -94,6 +94,10 @@ class Solver:
     def _load_model(self, checkpoint_path=None):
         checkpoint_path = checkpoint_path if checkpoint_path else os.path.join(self.checkpoint_root, f"{self.config['start_epoch']}.pth")
         
+        # 初始为0时，不需要断点重续
+        if self.config['start_epoch'] == 0:
+            return
+        
         # 不存在模型时，直接从epoch为0开始
         if not os.path.exists(checkpoint_path):
             tqdm.write(f'\033[1;33m[WARNING]\033[0m\t No checkpoint provided, while loading model. Starting from scratch...')
@@ -267,8 +271,6 @@ class Solver:
             eval_batch_bar.set_postfix({'G_loss': losses['G_loss'], 'D_loss': losses['D_loss'], 'SSIM': ssim.mean().item(), 'PSNR': psnr.mean().item()})
         eval_batch_bar.close()
         # 处理数据并返回
-        # mean_batch_losses = {k: np.mean([loss[k] for loss in batch_losses]) for k in batch_losses[0].keys()}
-        # mean_batch_metrics = {k: np.mean([metric[k] for metric in batch_metrics]) for k in batch_metrics[0].keys()}
         mean_batch_losses = {
             k: torch.mean(torch.tensor([losses[k].item() if torch.is_tensor(losses[k]) else losses[k] 
                 for losses in batch_losses])).item()
@@ -283,7 +285,7 @@ class Solver:
         if not need_sample:
             return mean_batch_losses, mean_batch_metrics
         else:
-            samples = {'input': self.model.real_A, 'output': self.model.fake_B, 'target': self.model.real_B}
+            samples = {'input': self.model.real_A, 'output': self.model.fake_B, 'target': self.model.real_B, 'mask': self.model.mask}
             return mean_batch_losses, mean_batch_metrics, samples
         
 
@@ -295,6 +297,11 @@ if __name__ == '__main__':
 
     with open(opt.config, 'r') as f:
         config = yaml.safe_load(f)
+        
+    if config['need_bugfree']:
+        from util.bugfree import BugFree
+        bugfree = BugFree(config['bugfree'])
+        bugfree()
     
     if config['use_seed']:
         os.environ['PYTHONHASHSEED'] = str(config['seed']) # python内置随机数种子
