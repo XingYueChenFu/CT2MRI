@@ -22,7 +22,7 @@ train_root: [
 train_label: [
   # 0,
   # 1,
-  0，
+  0,
   # 1, # 尚未配准完
 ]
 
@@ -31,7 +31,7 @@ test_root: [ # [not implemented]
   '/home/featurize/data/Task1/brain', 
 ]
 test_label: [
-  0,
+  0
 ]
 
 
@@ -40,7 +40,7 @@ ignore_ids: [
   'overview',
 ]
 
-start_slice: 30 # 切片开始的位置（默认从数据中间取，start_slice不为-1时，从start_slice开始取）
+start_slice: 30 # 切片开始的位置（默认从数据中间取,start_slice不为-1时,从start_slice开始取）
 target_depth_size: 32 # 数据切留的厚度
 target_image_size: 256 # 切片数据的H,W
 
@@ -51,7 +51,7 @@ ct_window_width: 80
 # ===== TRAINER ===== 
 gpu_ids: [0]
 num_workers: 4 # 线程数
-batch_size: 2 # 批量大小
+batch_size: 1 # 批量大小（量力而行。batch_size为1时，总消耗显存 13 514 MB）
 
 isTrain: true # 是否训练
 
@@ -84,7 +84,7 @@ lr_max: 0.0002 # 学习率
 gan_mode: 'vanilla' # GAN模式 [vanilla| lsgan ｜ wgangp] 如：vanilla: cross-entropy objective
 
 # 日志等需要的
-output_root: '/home/featurize/output' # 实际位置在 {log_dir}/{name}
+output_root: '/home/featurize/data/output' # 实际位置在 {log_dir}/{name}
 
 # 保留的原始参数（待优化）
 Npatch: 24

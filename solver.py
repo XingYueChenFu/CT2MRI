@@ -10,8 +10,8 @@ import numpy as np
 from tqdm import tqdm
 
 from torch.utils.data import DataLoader
-from torchmetrics import StructuralSimilarityIndexMeasure as SSIM
-from torchmetrics import PeakSignalNoiseRatio as PSNR
+from torchmetrics.image import StructuralSimilarityIndexMeasure as SSIM
+from torchmetrics.image import PeakSignalNoiseRatio as PSNR
 
 from tensorboardX import SummaryWriter
 
@@ -27,7 +27,7 @@ from models.GAN_class import *
 class Solver:
     def __init__(self, config):
         # ===== 加载配置 ===== 
-        tqdm.write(f'\033[1;34m[INFO]\033[0m Loading config...')
+        tqdm.write(f'\033[1;34m[INFO]\033[0m\t Loading config...')
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.config['device'] = self.device
@@ -58,45 +58,45 @@ class Solver:
         
         # ===== 加载预训练模型 =====
         if config['VGG_loss']:
-            tqdm.write(f'\033[1;34m[INFO]\033[0m Checking pre-trained model...')
+            tqdm.write(f'\033[1;34m[INFO]\033[0m\t Checking pre-trained model...')
             if not os.path.exists(config['pretrain_model_path']):
-                tqdm.write(f'\033[1;34m[INFO]\033[0m Downloading VGG model...')
+                tqdm.write(f'\033[1;34m[INFO]\033[0m\t Downloading VGG model...')
                 os.makedirs(os.path.dirname(config['pretrain_model_path']), exist_ok=True)
                 os.system(f'wget https://download.pytorch.org/models/vgg19-dcbb9e9d.pth -O {config["pretrain_model_path"]}')
             
         
         # ===== 构造模型等 =====
-        tqdm.write(f'\033[1;34m[INFO]\033[0m Building model...')
+        tqdm.write(f'\033[1;34m[INFO]\033[0m\t Building model...')
         self.model = GANclass(self.opt) # GANclass使用的是argparse.Namespace
         
         self.ssim = SSIM(data_range=self.config['data_tange']).to(self.device)
         self.psnr = PSNR(data_range=self.config['data_tange']).to(self.device)
         
         # ===== 加载checkpoint模型 =====
-        tqdm.write(f'\033[1;34m[INFO]\033[0m Loading model...')
+        tqdm.write(f'\033[1;34m[INFO]\033[0m\t Loading model...')
         self._load_model()
         
         # ===== 加载数据集 ===== 
-        tqdm.write(f'\033[1;34m[INFO]\033[0m Loading datasets...')
+        tqdm.write(f'\033[1;34m[INFO]\033[0m\t Loading datasets...')
         self._load_data()
     
     def _load_data(self):
         self.trainset, self.valset, self.testset = create_datasets(config)
         # DataLoader
         self.train_loader = DataLoader(self.trainset, batch_size=config['batch_size'], shuffle=True, num_workers=4) if self.trainset else None
-        tqdm.write(f'\033[1;34m[INFO]\033[0m ' + (f'\tTrainset: \033[34m{len(self.train_loader.dataset)}\033[0m \tTrainLoader: \033[34m{len(self.train_loader)}\033[0m' if self.trainset else f'\tTrainset: \033[34m{None}\033[0m \tTrainLoader: \033[34m{None}\033[0m'))
+        tqdm.write(f'\t Trainset: \033[34m{len(self.train_loader.dataset)}\033[0m \tTrainLoader: \033[34m{len(self.train_loader)}\033[0m' if self.trainset else f'\tTrainset: \033[34m{None}\033[0m \tTrainLoader: \033[34m{None}\033[0m')
         self.val_loader = DataLoader(self.valset, batch_size=config['batch_size'], shuffle=False, num_workers=4) if self.valset else None
-        tqdm.write(f'\033[1;34m[INFO]\033[0m ' + (f'\tValset: \033[34m{len(self.val_loader.dataset)}\033[0m \tValLoader: \033[34m{len(self.val_loader)}\033[0m' if self.valset else f'\tValset: \033[34m{None}\033[0m \tValLoader: \033[34m{None}\033[0m'))
+        tqdm.write(f'\t Valset: \033[34m{len(self.val_loader.dataset)}\033[0m \tValLoader: \033[34m{len(self.val_loader)}\033[0m' if self.valset else f'\tValset: \033[34m{None}\033[0m \tValLoader: \033[34m{None}\033[0m')
         self.test_loader = DataLoader(self.testset, batch_size=config['batch_size'], shuffle=False, num_workers=4) if self.testset else None
-        tqdm.write(f'\033[1;34m[INFO]\033[0m ' + (f'\tTestset: \033[34m{len(self.test_loader.dataset)}\033[0m \tTestLoader: \033[34m{len(self.test_loader)}\033[0m' if self.testset else f'\tTestset: \033[34m{None}\033[0m \tTestLoader: \033[34m{None}\033[0m'))
+        tqdm.write(f'\t Testset: \033[34m{len(self.test_loader.dataset)}\033[0m \tTestLoader: \033[34m{len(self.test_loader)}\033[0m' if self.testset else f'\tTestset: \033[34m{None}\033[0m \tTestLoader: \033[34m{None}\033[0m')
     
     # 加载模型，没有模型时，从epoch为0开始
     def _load_model(self, checkpoint_path=None):
-        checkpoint_path = checkpoint_path if checkpoint_path else os.path.join(self.checkpoint_root, f'{self.config['start_epoch']}.pth')
+        checkpoint_path = checkpoint_path if checkpoint_path else os.path.join(self.checkpoint_root, f"{self.config['start_epoch']}.pth")
         
         # 不存在模型时，直接从epoch为0开始
         if not os.path.exists(checkpoint_path):
-            tqdm.write(f'\033[1;33m[WARNING]\033[0m No checkpoint provided, while loading model. Starting from scratch...')
+            tqdm.write(f'\033[1;33m[WARNING]\033[0m\t No checkpoint provided, while loading model. Starting from scratch...')
             self.config['start_epoch'] = 0
             return
         
@@ -119,7 +119,7 @@ class Solver:
             self.model.optimizer_D.load_state_dict(state['optimizer_D'])
         self.config['start_epoch'] = state['epoch']
         self.opt.epoch_count = state['epoch']
-        tqdm.write(f'\033[1;32m[Success]\033[0m Successfully loaded model from "{checkpoint_path}", starting from epoch {self.config["start_epoch"]}...')
+        tqdm.write(f'\033[1;32m[Success]\033[0m\t Successfully loaded model from "{checkpoint_path}", starting from epoch {self.config["start_epoch"]}...')
     
     # 保存模型
     def _save_model(self, checkpoint_path=None, epoch=None):
@@ -127,7 +127,7 @@ class Solver:
         
         if checkpoint_path is None:
             checkpoint_path = os.path.join(self.checkpoint_root, f'default_{epoch}.pth')
-            tqdm.write(f'\033[1;33m[WARNING]\033[0m No checkpoint path provided, using default path "{checkpoint_path}"')
+            tqdm.write(f'\033[1;33m[WARNING]\033[0m\t No checkpoint path provided, using default path "{checkpoint_path}"')
         
         state = {
             'epoch': epoch + 1,
@@ -137,24 +137,24 @@ class Solver:
             'optimizer_D': self.model.optimizer_D.state_dict()
         }
         torch.save(state, checkpoint_path)
-        tqdm.write(f'\033[1;32m[Success]\033[0m Successfully saved model to "{checkpoint_path}", epoch {epoch}')
+        tqdm.write(f'\033[1;32m[Success]\033[0m\t Successfully saved model to "{checkpoint_path}", epoch {epoch}')
         
     
     def train(self):
-        tqdm.write(f'\n\033[1;34m[INFO]\033[0m Training...')
+        tqdm.write(f'\n\033[1;34m[INFO]\033[0m\t Training...')
         # 变量
         self.best_SSIM = 0
         self.train_losses, self.train_metrics = [], [] # 目前没在训练时加上评估
         self.eval_losses, self.eval_metrics = [], []
         tb_writer = SummaryWriter(self.tb_root)
         
-        epoch_bar = tqdm(range(self.config['start_epoch']+1, self.config['max_epochs']+1), desc='\033[34mTraining Progress\033[0m', unit='epoch', position=0, leave=True)
+        epoch_bar = tqdm(range(self.config['start_epoch']+1, self.config['max_epochs']+1), desc='\033[34mTraining Progress\033[0m', unit='epoch', position=0, leave=True, dynamic_ncols=True)
         
         self.start_time = time.time()
         
         for self.epoch in epoch_bar:
             # ///// 训练 /////
-            train_batch_bar = tqdm(range(len(self.train_loader)), desc='\033[34mTraining\033[0m Batch Progress', unit='batch', position=1, leave=False)
+            train_batch_bar = tqdm(range(len(self.train_loader)), desc='\033[34mTraining\033[0m Batch Progress', unit='batch', position=1, leave=False, dynamic_ncols=True)
             for batch_idx, batch_data in enumerate(self.train_loader):
                 batch_losses, batch_metrics = [], []
                 # ===== 训练逻辑 =====
@@ -177,13 +177,22 @@ class Solver:
                 
                 # 进度条
                 train_batch_bar.update(1)
-                train_batch_bar.set_postfix({'G_loss': losses['G_loss'], 'D_loss': losses['D_loss'], 'SSIM': ssim, 'PSNR': psnr})
+                train_batch_bar.set_postfix({'G_loss': losses['G_loss'], 'D_loss': losses['D_loss'], 'SSIM': ssim.mean().item(), 'PSNR': psnr.mean().item()})
             train_batch_bar.close()
 
             # 存放损失&指标
-            mean_batch_losses = {k: np.mean([loss[k] for loss in batch_losses]) for k in batch_losses[0].keys()}
+            mean_batch_losses = {
+                k: torch.mean(torch.tensor([losses[k].item() if torch.is_tensor(losses[k]) else losses[k] 
+                    for losses in batch_losses])).item()
+                for k in batch_losses[0].keys()
+            }
+            mean_batch_metrics = {
+                k: torch.mean(torch.tensor([metrics[k].item() if torch.is_tensor(metrics[k]) else metrics[k] 
+                    for metrics in batch_metrics])).item()
+                for k in batch_metrics[0].keys()
+            }
+            
             self.train_losses.append(mean_batch_losses)
-            mean_batch_metrics = {k: np.mean([metric[k] for metric in batch_metrics]) for k in batch_metrics[0].keys()}
             self.train_metrics.append(mean_batch_metrics)
             # 保存tensorboard
             tb_writer.add_scalar('train_SSIM', mean_batch_metrics['SSIM'], self.epoch)
@@ -192,13 +201,12 @@ class Solver:
             tb_writer.add_scalar('train_D_loss', mean_batch_losses['D_loss'], self.epoch)
             
             # ///// 评估 /////
-            if self.epoch % self.config['eval_interval'] == 0:
+            if self.epoch % self.config['eval_interval'] == 1: # 本来应该是== 0（想在1st epoch后就看看效果，这里改为== 1）
                 mean_eval_losses, mean_eval_metrics, samples = self.evaluate(self.val_loader, need_sample = True)
                 
                 self.eval_losses.append(mean_eval_losses)
                 self.eval_metrics.append(mean_eval_metrics)
                 
-                tqdm.write(f'\033[1;34m[INFO]\033[0m Evaluation at epoch {self.epoch}: SSIM: {mean_eval_metrics["SSIM"]:.4f}, PSNR: {mean_eval_metrics["PSNR"]:.4f}')
                 # 保存评估结果
                 # 保存log: {self.epoch}.json
                 log_path = os.path.join(self.log_root, f'{self.epoch}.json')
@@ -225,6 +233,7 @@ class Solver:
             # 进度条
             epoch_bar.update(1)
         epoch_bar.close()
+        tqdm.write(f'\033[1;32m[Success]\033[0m\t Training finished, total time: {time.time() - self.start_time:.2f}s')
     
     def evaluate(self, dataloader=None, need_sample=False):
         # 如果need_sample，返回最后的评估样例
@@ -232,10 +241,10 @@ class Solver:
         # 优先级: 传入数据集 > test_loader > val_loader > train_loader > None
         dataloader = dataloader if dataloader else (self.test_loader if self.test_loader else (self.val_loader if self.val_loader else (self.train_loader if self.train_loader else None)))
         if dataloader is None:
-            tqdm.write(f'\033[1;31m[ERROR]\033[0m No dataloader provided')
+            tqdm.write(f'\033[1;31m[ERROR]\033[0m\t No dataloader provided')
             return None, None, None
         
-        eval_batch_bar = tqdm(range(len(dataloader)), desc='\033[34mEvaluation\033[0m Progress', unit='batch', position=1, leave=True)
+        eval_batch_bar = tqdm(range(len(dataloader)), desc='\033[34mEvaluation\033[0m Progress', unit='batch', position=1, leave=True, dynamic_ncols=True)
         batch_losses, batch_metrics = [], []
         
         for batch_idx, batch_data in enumerate(dataloader):
@@ -255,11 +264,21 @@ class Solver:
             
             # 进度条
             eval_batch_bar.update(1)
-            eval_batch_bar.set_postfix({'G_loss': losses['G_loss'], 'D_loss': losses['D_loss'], 'SSIM': ssim, 'PSNR': psnr})
+            eval_batch_bar.set_postfix({'G_loss': losses['G_loss'], 'D_loss': losses['D_loss'], 'SSIM': ssim.mean().item(), 'PSNR': psnr.mean().item()})
         eval_batch_bar.close()
         # 处理数据并返回
-        mean_batch_losses = {k: np.mean([loss[k] for loss in batch_losses]) for k in batch_losses[0].keys()}
-        mean_batch_metrics = {k: np.mean([metric[k] for metric in batch_metrics]) for k in batch_metrics[0].keys()}
+        # mean_batch_losses = {k: np.mean([loss[k] for loss in batch_losses]) for k in batch_losses[0].keys()}
+        # mean_batch_metrics = {k: np.mean([metric[k] for metric in batch_metrics]) for k in batch_metrics[0].keys()}
+        mean_batch_losses = {
+            k: torch.mean(torch.tensor([losses[k].item() if torch.is_tensor(losses[k]) else losses[k] 
+                for losses in batch_losses])).item()
+            for k in batch_losses[0].keys()
+        }
+        mean_batch_metrics = {
+            k: torch.mean(torch.tensor([metrics[k].item() if torch.is_tensor(metrics[k]) else metrics[k] 
+                for metrics in batch_metrics])).item()
+            for k in batch_metrics[0].keys()
+        }
         
         if not need_sample:
             return mean_batch_losses, mean_batch_metrics
@@ -280,8 +299,15 @@ if __name__ == '__main__':
     if config['use_seed']:
         os.environ['PYTHONHASHSEED'] = str(config['seed']) # python内置随机数种子
     # os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # GPU与CPU同步
+    
+    # 测试数据集加载
+    # from data.dataset import MedicalDataset3D
+    # md3d = MedicalDataset3D(config)
+    # tqdm.write(md3d[0]['A'].shape) # (2,1,32,256,256)
 
+    # 测试模型训练
     solver = Solver(config)
     solver.train()
+    
 
         

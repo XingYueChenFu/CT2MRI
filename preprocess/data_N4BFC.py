@@ -3,7 +3,7 @@
 
 请配置好文件夹等
 
-参考时间，180+180个病例需要大于7+7小时
+参考时间，180+180个病例需要大于4+4小时
 """
 
 
@@ -42,6 +42,22 @@ def perform_n4_correction(input_image, mask_image=None):
     
     return corrected_image
 
+def is_case_processed(output_case_path):
+    """
+    检查病例是否已经处理完成
+    """
+    # 检查是否所有需要的文件都存在
+    required_files = ['ct.nii.gz', 'mr.nii.gz', 'mask.nii.gz']
+    existing_files = os.listdir(output_case_path) if os.path.exists(output_case_path) else []
+    
+    # 如果CT和MR都存在则视为已处理
+    has_ct = 'ct.nii.gz' in existing_files
+    has_mr = 'mr.nii.gz' in existing_files
+    has_mask = 'mask.nii.gz' in existing_files
+    
+    # 如果CT或MR存在且mask也存在，则认为该病例已处理
+    return (has_ct or has_mr) and has_mask
+
 def process_folder(data_root, output_root):
     """
     处理单个文件夹中的所有扫描
@@ -56,20 +72,27 @@ def process_folder(data_root, output_root):
     for case in tqdm(case_folders, desc=f"Processing {os.path.basename(data_root)}"):
         case_path = os.path.join(data_root, case)
         output_case_path = os.path.join(output_root, case)
+        
+        # 检查是否已经处理过
+        if is_case_processed(output_case_path): # 如果ct,mr,mask都存在则跳过
+            continue
+        
         os.makedirs(output_case_path, exist_ok=True)
         
         # 处理CT图像
         ct_path = os.path.join(case_path, 'ct.nii.gz')
         if os.path.exists(ct_path):
             try:
+                # CT不需要N4偏置场校正
                 ct_image = sitk.ReadImage(ct_path)
-                mask_image = sitk.ReadImage(os.path.join(case_path, 'mask.nii.gz'))
+                # mask_image = sitk.ReadImage(os.path.join(case_path, 'mask.nii.gz'))
                 
-                # 执行N4校正
-                corrected_ct = perform_n4_correction(ct_image, mask_image)
+                # # 执行N4校正
+                # corrected_ct = perform_n4_correction(ct_image, mask_image)
                 
-                # 保存结果
-                sitk.WriteImage(corrected_ct, os.path.join(output_case_path, 'ct.nii.gz'))
+                # # 保存结果
+                # sitk.WriteImage(corrected_ct, os.path.join(output_case_path, 'ct.nii.gz'))
+                sitk.WriteImage(ct_image, os.path.join(output_case_path, 'ct.nii.gz'))
             except Exception as e:
                 print(f"Error processing CT for case {case}: {str(e)}")
         

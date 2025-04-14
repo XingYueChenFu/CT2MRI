@@ -268,7 +268,7 @@ from torch.utils.data import Dataset, random_split
 
 
 class MedicalDataset3D(Dataset):
-    def __init__(self, config: Dict, mode: str = 'train'):
+    def __init__(self, config: Dict, mode: str = 'train', tqdm_position = None):
         """
         Initialize the MedicalDataset3D.
         
@@ -298,28 +298,32 @@ class MedicalDataset3D(Dataset):
                 self._collect_data_from_root(root, label)
 
         if self.preload:
-            tqdm.write(f'\t\033[1;34m[INFO]\033[0m Preloading data into memory...')
+            tqdm.write(f'\033[1;34m[INFO]\033[0m\t Preloading data into memory...')
             # 加载数据到内存
             self.data = []
-            path_bar = tqdm(total=len(self.data_paths), desc='\tPreloading data', unit='sample')
+            if tqdm_position is not None:
+                path_bar = tqdm(total=len(self.data_paths), desc='Preloading data', unit='sample', position=tqdm_position, leave=True, dynamic_ncols=True)
+            else:
+                path_bar = tqdm(total=len(self.data_paths), desc='Preloading data', unit='sample', leave=True , dynamic_ncols=True)
             for idx, path in enumerate(self.data_paths):
-                label = self.labels[idx]
-                
                 ct = nib.load(os.path.join(path, 'ct.nii.gz')).get_fdata()
                 mr = nib.load(os.path.join(path, 'mr.nii.gz')).get_fdata()
                 mask = nib.load(os.path.join(path, 'mask.nii.gz')).get_fdata()
+                label = torch.tensor(self.labels[idx]).long() # label转化为tensor, int64
                 self.data.append(self._process_data(ct, mr, mask, label))
                 
                 path_bar.update(1)
+                path_bar.set_description(f'Preloading data: {idx + 1}/{len(self.data_paths)}')
             path_bar.close()
             
             # 统计占用
+            self.data_memory = 0.0
             for items in self.data: 
                 self.data_memory += sys.getsizeof(items)
                 for ele in items[:3]: # tensor管理的张量需要额外获取 
                     self.data_memory += ele.element_size() * ele.nelement()
             
-            tqdm.write(f'\t\033[1;34m[INFO]\033[0m Preloaded \033[34m{len(self.data_paths)}\033[0m samples. Total memory used: \033[34m{self.data_memory / (1024 * 1024):.2f} MB\033[0m')
+            tqdm.write(f'\033[1;34m[INFO]\033[0m\t Preloaded \033[34m{len(self.data_paths)}\033[0m samples. Total memory used: \033[34m{self.data_memory / (1024 * 1024):.2f} MB\033[0m')
         
     def _collect_data_from_root(self, root: str, label: int):
         """Collect data paths from a root directory."""

@@ -6,36 +6,32 @@
 ## 方法来源：
 [MTT-Net: Multi-scale Tokens-Aware Transformer Network for Multi-region and Multi-sequence MR-to-CT Synthesis in A Single Model](https://github.com/SMU-MedicalVision/MTT-Net)
 
-## Experiments
-- CUDA/CUDNN
-- torch >=1.12.0
-- timn >=0.5.4
-- numpy >=1.22.3
+## 训练
 
-## Dataset
-We applied N4 bias field correction to the data and performed registration between MR and CT images. The paired data is stored in the following format:
+### 加载数据集
+
+下载SynthRAD2023比赛的Task1数据集
+
+解压到`config.yaml`中train_root中的路径下，或自己配置
+
+  注意，我使用的数据的mri经过了N4偏置场校正（可以不用，有小幅度提升）
+
+  你可以参考使用项目中`preprocess/data_N4BFC.py`进行配准，非常耗时
+
+  注意对应改`config.yaml`中的路径
+
+### 下载预训练模型
+
+你可以参考使用项目中`preprocess/pretrainedmodel_downloader.ipynb`下载使用的预训练模型
+
+  注意对应改`config.yaml`中的路径
+
+### 运行
+
+```bash
+# 默认
+python solver.py
+
+# 自定义配置文件路径
+python ./solver.py --config ./config.yaml
 ```
-/Datasets/
-    ├──Headneck_001
-      ├── MR.nii.gz
-      ├── CT.nii.gz
-      ├── mask.nii.gz
-    ├──Headneck_002
-      ├── MR.nii.gz
-      ├── CT.nii.gz
-      ├── mask.nii.gz
-    .
-    .
-
-    ├──Abdomen_001
-      ├── MR.nii.gz
-      ├── CT.nii.gz
-      ├── mask.nii.gz
-    ├──Abdomen_002
-      ├── MR.nii.gz
-      ├── CT.nii.gz
-      ├── mask.nii.gz
-```
-
-## Train
-To run the train.py file, you need to set common parameters such as the data storage path and patch size. If you need to use VGG perceptual loss, you can go to the official website and download the pre-trained model of VGG19: vgg19-dcbb9e9d.pth.
