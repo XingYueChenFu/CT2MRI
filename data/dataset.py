@@ -367,13 +367,19 @@ class MedicalDataset3D(Dataset):
         }
     
     def _process_data(self, ct, mr, mask, label):
-        ct =self._normalize_ct(ct)
-        mr = self._normalize_mr(mr)
-        mask = (mask > 0).astype(np.float32)
+        # 本来先处理再裁剪并pad的，但mri会出问题，改为先裁剪并pad再处理
+        # ct = self._normalize_ct(ct)
+        # mr = self._normalize_mr(mr)
+        # mask = np.array(mask, dtype=np.float32)
         
         ct = self._select_and_pad(ct)
         mr = self._select_and_pad(mr)
         mask = self._select_and_pad(mask)
+        
+        ct = self._normalize_ct(ct)
+        mr = self._normalize_mr(mr)
+        # mask = self._normalize_mask(mask) # 原始就0~1，不要对其进行处理，以免出问题
+        mask = np.array(mask, dtype=np.float32)
         
         ct = np.expand_dims(ct, axis=0)
         mr = np.expand_dims(mr, axis=0)
@@ -396,22 +402,36 @@ class MedicalDataset3D(Dataset):
         window_max = self.ct_window_level + self.ct_window_width / 2
         
         ct = np.clip(ct, window_min, window_max)
+        """Normalize CT to 0~255 range."""
         ct = (ct - window_min) / (window_max - window_min) * 255.0
         return ct.astype(np.float32)
     
     def _normalize_mr(self, mr: np.ndarray) -> np.ndarray:
-        """Normalize MRI to 0-1 range."""
+        """Normalize MRI to -1~1 range."""
         mr_min = mr.min()
         mr_max = mr.max()
         
         if mr_max != mr_min:
-            mr = (mr - mr_min) / (mr_max - mr_min)
+            mr = (mr - mr_min) / (mr_max - mr_min) * 2 - 1 # -1~1
+        else:
+            mr = np.zeros_like(mr)
         return mr.astype(np.float32)
     
-    def _select_and_pad(self, volume: np.ndarray) -> np.ndarray:
+    def _normalize_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Normalize mask to 0~1 range."""
+        mask_min = mask.min()
+        mask_max = mask.max()
+        
+        if mask_max != mask_min:
+            mask = (mask - mask_min) / (mask_max - mask_min)
+        else:
+            mask = np.zeros_like(mask)
+        return mask
+    
+    def _select_and_pad(self, volume: np.ndarray, pad_value=None) -> np.ndarray:
         """Select slices and pad to target size."""
         depth = volume.shape[-1]
-        
+
         # Select slices
         if self.start_slice == -1:
             # Start from middle
@@ -436,13 +456,12 @@ class MedicalDataset3D(Dataset):
             pad_width = ((0, pad_h), (0, pad_w))
         
         # Use minimum value for padding
-        pad_value = volume.min()
+        pad_value = pad_value if pad_value is not None else volume.min()
         volume = np.pad(volume, pad_width, mode='constant', constant_values=pad_value)
         
         # If still not big enough (unlikely), crop
         if volume.shape[0] > self.target_size or volume.shape[1] > self.target_size:
             volume = volume[:self.target_size, :self.target_size, ...]
-        
         return volume
 
 def create_datasets(config: Dict) -> Tuple[Dataset, Optional[Dataset], Dataset]:
@@ -482,3 +501,64 @@ def create_datasets(config: Dict) -> Tuple[Dataset, Optional[Dataset], Dataset]:
         val_dataset = None
     
     return train_dataset, val_dataset, test_dataset
+
+# Liu's Dataset
+
+import glob
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+class ImagesDataset3D(Dataset):
+    def __init__(self, config, train=True):
+        self.train = train
+        self.preload = config['preload']
+        if self.train:
+            self.CT_roots = config['trainCT_root']
+            self.MR_roots = config['trainMR_root']
+        else:
+            self.CT_roots = config['testCT_root']
+            self.MR_roots = config['testMR_root']
+        
+        self.CT_paths = []
+        self.MR_paths = []
+        for root in self.CT_roots:
+            self.CT_paths += glob.glob(f'{root}/*')
+        for root in self.MR_roots:
+            self.MR_paths += glob.glob(f'{root}/*')
+        
+        # Preload images
+        if self.preload:
+            self.CT_images = []
+            self.MR_images = []
+            for path in self.CT_paths:
+                CT_image = torch.from_numpy(np.load(path).astype(np.float32))
+                if len(CT_image.shape) == 3: # 如果是3D图像，增加一个维度
+                    CT_image = CT_image.unsqueeze(0)
+                self.CT_images.append(CT_image) # torch.Size([1, 32, 256, 256])
+            for path in self.MR_paths:
+                MR_image = torch.from_numpy(np.load(path).astype(np.float32))
+                # 如果是3D图像，增加一个维度
+                if len(MR_image.shape) == 3:
+                    MR_image = MR_image.unsqueeze(0)
+                self.MR_images.append(MR_image) # torch.Size([1, 32, 256, 256])
+            print(f'\033[1;34m[info]\033[0m \033[32m{len(self.CT_images)}\033[0m CT images and \033[32m{len(self.MR_images)}\033[0m MR images are\033[34m preloaded\033[0m.')
+        # not Preload images
+        else:
+            print(f'\033[1;34m[info]\033[0m \033[32m{len(self.CT_paths)}\033[0m CT images and \033[32m{len(self.MR_paths)}\033[0m  MR images are\033[34m founded.')
+    
+    def __getitem__(self, index):
+        if self.preload:
+            CT_image = self.CT_images[index]
+            MR_image = self.MR_images[index]
+        else:
+            CT_image = torch.from_numpy(np.load(self.CT_paths[index]).astype(np.float32))
+            MR_image = torch.from_numpy(np.load(self.MR_paths[index]).astype(np.float32))
+        
+        mask = torch.ones_like(CT_image)
+        label = torch.tensor(0).long()
+        return {'A': CT_image, 'B': MR_image, 'mask': mask, 'label': label } # 每个都是 torch.Size([1, 32, 256, 256])
+    
+    def __len__(self):
+        return max(len(self.CT_paths), len(self.MR_paths))

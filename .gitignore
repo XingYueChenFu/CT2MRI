@@ -3,11 +3,12 @@ __pycache__/
 train_model/
 output/
 
-prompts.md
-
 *.pyc
 *.npy
 
 *.pth
 *.ckpt
 
+prompts.md
+test.py
+test.ipynb

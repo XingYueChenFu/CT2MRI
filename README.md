@@ -35,3 +35,16 @@ python solver.py
 # 自定义配置文件路径
 python ./solver.py --config ./config.yaml
 ```
+
+### 检测
+```bash
+# 终端运行
+tensorboard --logdir /home/featurize/data/output/MTT-Net/tensorboard --bind-all
+
+# 开新终端，暴露端口
+featurize port export 6006
+# 会给你服务器转发的网址
+
+# 结束时，记得取消暴露
+featurize port unexport 6006  
+```
