@@ -7,6 +7,9 @@ import functools
 from torch.optim import lr_scheduler
 from pytorch_wavelets import DWTForward, DWTInverse
 from models.block.MSwin_transformer import MSwintransformer
+from models.reg3D import Reg
+from models.transformer3D import Transformer_3D
+from models.lossfuncs import smooothing_loss3D
 
 
 

@@ -1,4 +1,4 @@
-name: 'MTT-Net-LiuDataset' # ⚠️ 默认: 'MTT-Net'，若不是，请改正
+name: 'MTT-Net' # ⚠️ 默认: 'MTT-Net'，若不是，请改正
 
 # ====== 重要参数 ======
 use_seed: false
@@ -45,8 +45,8 @@ ignore_ids: [
 ]
 
 start_slice: 61 # 切片开始的位置（默认从数据中间取,start_slice不为-1时,从start_slice开始取）
-# target_depth_size: 32 # 数据切留的厚度
-target_depth_size: 64 # Liu给的数据 (batch_size:1 时，显存为 23 768 MB)
+target_depth_size: 32 # 数据切留的厚度
+# target_depth_size: 64 # Liu给的数据 (batch_size:1 时，显存为 23 768 MB)
 target_image_size: 256 # 切片数据的H,W
 
 # ct窗位
@@ -60,6 +60,7 @@ gpu_ids: [0]
 num_workers: 4 # 线程数
 batch_size: 1 # 批量大小（量力而行。batch_size为1时，nvidia-smi显示中占用显存 13 068 MB）
 
+use_reg: true # 加入RegGAN的RegNet
 isTrain: true # 是否训练
 
 start_epoch: 0 # 从第几轮开始训练 # 当不是0时，会尝试读取上次训练的模型
@@ -71,6 +72,7 @@ input_nc: 1 # 输入通道数
 output_nc: 1 # 输出通道数
 G_model: 'MTTNET' # 生成器模型
 D_model: 'wave3DDiscriminator' # 判别器模型
+R_model: 'Reg' # Reg模型
 ngf: 16
 ndf: 16
 n_layers_D: 2 # only used if netD==n_layers
@@ -85,6 +87,9 @@ load_name: 'latest'
 
 # 超参数
 lambda_L1: 20
+Adv_lambda: 1
+SR_lambda: 20
+SM_lambda: 10 # smooth lambda
 VGG_loss: true # 是否使用VGG loss
 pretrain_model_path: 'perceive_loss/vgg19-dcbb9e9d.pth'
 beta1: 0.5 # Adam优化器参数
@@ -117,19 +122,19 @@ Liu_dataset:
   # 训练CT数据路径
   trainCT_root: [
     # '/home/featurize/data/TRAINNING/CT',
-    '/home/featurize/data/Task1_Liu_split/train/CT'
+    '/home/featurize/data/Task1_Liu_split_32/train/CT'
   ]
   # 训练MR数据路径
   trainMR_root: [
-    '/home/featurize/data/Task1_Liu_split/train/MR',
+    '/home/featurize/data/Task1_Liu_split_32/train/MR',
   ]
   # 测试CT路径
   testCT_root: [
-    '/home/featurize/data/Task1_Liu_split/val/CT',
+    '/home/featurize/data/Task1_Liu_split_32/val/CT',
   ]
   # 测试MR路径 
   testMR_root: [
-    '/home/featurize/data/Task1_Liu_split/val/MR',
+    '/home/featurize/data/Task1_Liu_split_32/val/MR',
   ]
   preload: true  # 将dataset直接加入内存
 

@@ -124,6 +124,15 @@ class Solver:
         pretrained_netG_dict = {k: v for k, v in pretrained_netG_dict.items() if k in model_netG_dict}
         model_netG_dict.update(pretrained_netG_dict)
         self.model.netG.load_state_dict(model_netG_dict)  # torch.load: 加载训练好的模型 load_state_dict: 将torch.load加载出来的数据加载到net中
+        
+        if self.opt.use_reg:
+            pretrained_netR_dict = state['netR_state_dict']
+            model_netR_dict = self.model.netR.state_dict()
+            pretrained_netR_dict = {k: v for k, v in pretrained_netR_dict.items() if k in model_netR_dict}
+            model_netR_dict.update(pretrained_netR_dict)
+            self.model.netR.load_state_dict(model_netR_dict)
+            
+            self.model.optimizer_R.load_state_dict(state['optimizer_R'])
 
         if self.opt.isTrain:
             pretrained_netD_dict = state['netD_state_dict']
@@ -154,6 +163,10 @@ class Solver:
             'optimizer_G': self.model.optimizer_G.state_dict(),
             'optimizer_D': self.model.optimizer_D.state_dict()
         }
+        if self.opt.use_reg:
+            state['netR_state_dict'] = self.model.netR.state_dict()
+            state['optimizer_R'] = self.model.optimizer_R.state_dict()
+        # 保存模型
         torch.save(state, checkpoint_path)
         tqdm.write(f'✅\033[32m \tSuccessfully saved model to "\033[1;32m{checkpoint_path}\033[0;32m", epoch {epoch}\033[0m')
         
