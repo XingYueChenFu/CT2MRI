@@ -1,0 +1,9 @@
+# 取消上传原仓库的部分文件
+__pycache__/
+.ipynb_checkpoints/
+dataset/
+images/
+scripts/
+
+reference_brats.nii.gz
+*.pth
