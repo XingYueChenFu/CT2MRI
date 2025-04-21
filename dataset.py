@@ -300,6 +300,48 @@ class NpyPairImageGenerator(Dataset):
             return torch.cat([input_img, target_img], 0)  # 合并输入和目标（可选）
         return {"input": input_img, "target": target_img}
     
+    def sample_conditions(self, batch_size: int):
+        # 随机选择batch_size个索引
+        indexes = np.random.randint(0, len(self), batch_size)
+        
+        # 初始化一个列表来存储条件张量
+        condition_tensors = []
+        
+        for index in indexes:
+            # 获取对应的数据项
+            if self.preload:
+                # 如果预加载了数据，直接从preloaded_data获取
+                item = self.preloaded_data[index]
+                if self.combine_output:
+                    input_img = item[0]  # 假设合并后的第一个部分是input
+                else:
+                    input_img = item["input"]
+            else:
+                # 如果没有预加载，需要读取文件
+                input_file, _ = self.pair_files[index]
+                input_img = self.read_npy(input_file, pass_scaler=self.full_channel_mask)
+                input_img = self.resize_img(input_img)
+                
+                # 增加通道维度
+                if input_img.ndim == 3:
+                    input_img = np.expand_dims(input_img, axis=0)
+                
+                # 转换为Tensor
+                if self.transform is not None:
+                    input_img = self.transform(input_img)
+                else:
+                    input_img = torch.from_numpy(input_img).float()
+            
+            # 确保张量在正确的设备上
+            if torch.cuda.is_available():
+                input_img = input_img.cuda()
+            
+            condition_tensors.append(input_img)
+        
+        # 将所有条件张量沿着batch维度拼接，并添加一个通道维度
+        # torch.Size([4, 32, 128, 128]) -> torch.Size([4, 1, 32, 128, 128])
+        return torch.cat(condition_tensors, dim=0).unsqueeze(1)
+    
 if __name__ == "__main__":
     # Example usage
     
@@ -335,6 +377,9 @@ if __name__ == "__main__":
     # 检查数据
     sample = train_dataset[0]
     print(sample["input"].shape, sample["target"].shape)  # e.g., torch.Size([1, 32, 128, 128])
+    
+    sample = train_dataset.sample_conditions(4)
+    print(sample.shape)  # e.g., torch.Size([4, 1, 32, 128, 128])
     
     from torch.utils.data import DataLoader
     train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)

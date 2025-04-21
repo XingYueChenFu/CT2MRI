@@ -377,9 +377,11 @@ class Trainer(object):
     def train(self):
         backwards = partial(loss_backwards, self.fp16)
         start_time = time.time()
-
+        
+        epoch_bar = tqdm(total=self.train_num_steps, desc='Training', unit='step', position=0, leave=True)
         while self.step < self.train_num_steps:
             accumulated_loss = []
+            
             for i in range(self.gradient_accumulate_every):
                 if self.with_condition:
                     data = next(self.dl)
@@ -390,7 +392,7 @@ class Trainer(object):
                     data = next(self.dl).cuda()
                     loss = self.model(data)
                 loss = loss.sum()/self.batch_size
-                print(f'{self.step}: {loss.item()}')
+                # print(f'{self.step}: {loss.item()}')
                 backwards(loss / self.gradient_accumulate_every, self.opt)
                 accumulated_loss.append(loss.item())
 
@@ -426,6 +428,9 @@ class Trainer(object):
                 self.save(milestone)
 
             self.step += 1
+            epoch_bar.update(1)
+            epoch_bar.set_postfix_str(f'loss: {average_loss:.4f}')
+        epoch_bar.close()
 
         print('training completed')
         end_time = time.time()

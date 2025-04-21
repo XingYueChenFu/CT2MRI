@@ -24,7 +24,7 @@ parser.add_argument('--train_lr', type=float, default=1e-5)
 parser.add_argument('--batchsize', type=int, default=1)
 parser.add_argument('--epochs', type=int, default=50000) # epochs parameter specifies the number of training iterations
 parser.add_argument('--timesteps', type=int, default=250)
-parser.add_argument('--save_and_sample_every', type=int, default=1000)
+parser.add_argument('--save_and_sample_every', type=int, default=1000) # 每多少步测试并一次模型
 # parser.add_argument('--with_condition', action='store_true') 
 parser.add_argument('--with_condition', default=True) 
 # 换用数据集
