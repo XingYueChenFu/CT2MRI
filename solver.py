@@ -179,14 +179,14 @@ class Solver:
         self.eval_losses, self.eval_metrics = [], []
         tb_writer = SummaryWriter(self.tb_root)
         
-        epoch_bar = tqdm(range(self.config['start_epoch']+1, self.config['max_epochs']+1), desc='\033[34mTraining Progress\033[0m', unit='epoch', position=0, leave=True, dynamic_ncols=True)
+        epoch_bar = tqdm(range(self.config['start_epoch']+1, self.config['max_epochs']+1), desc='\033[34mTraining Progress\033[0m', unit='epoch', position=1, leave=True, dynamic_ncols=True)
         
         self.start_time = time.time()
         
         # for self.epoch in epoch_bar:
         for self.epoch in range(self.config['start_epoch']+1, self.config['max_epochs']+1):
             # ///// 训练 /////
-            train_batch_bar = tqdm(range(len(self.train_loader)), desc='\033[34mTraining\033[0m Batch Progress', unit='batch', position=1, leave=False, dynamic_ncols=True)
+            train_batch_bar = tqdm(range(len(self.train_loader)), desc='\033[34mTraining\033[0m Batch Progress', unit='batch', position=0, leave=False, dynamic_ncols=True)
             for batch_idx, batch_data in enumerate(self.train_loader):
                 batch_losses, batch_metrics = [], []
                 # ===== 训练逻辑 =====
@@ -233,7 +233,7 @@ class Solver:
             tb_writer.add_scalar('train_D_loss', mean_batch_losses['D_loss'], self.epoch)
             
             # ///// 评估 /////
-            if self.epoch % self.config['eval_interval'] == 1: # 本来应该是== 0（想在1st epoch后就看看效果，这里改为== 1）
+            if self.epoch % self.config['eval_interval'] == 0: # 本来应该是== 0（想在1st epoch后就看看效果，这里改为== 1）
                 mean_eval_losses, mean_eval_metrics, samples = self.evaluate(self.val_loader, need_sample=True, sample_idx=random.randint(0, len(self.val_loader)-1)) # 随机取一个batch进行评估
                 tqdm.write(f'\033[1;34m[INFO]\033[0m\t Evaluation at epoch {self.epoch}:\tG_loss: {mean_eval_losses["G_loss"]:.4f}\tD_loss: {mean_eval_losses["D_loss"]:.4f}\tSSIM: {mean_eval_metrics["SSIM"]:.4f}\tPSNR: {mean_eval_metrics["PSNR"]:.4f}')
                 
@@ -278,7 +278,7 @@ class Solver:
             return None, None, None
         sample_idx = sample_idx if sample_idx else (len(dataloader)-1)
         
-        eval_batch_bar = tqdm(range(len(dataloader)), desc='\033[34mEvaluation\033[0m Progress', unit='batch', position=1, leave=False, dynamic_ncols=True)
+        eval_batch_bar = tqdm(range(len(dataloader)), desc='\033[34mEvaluation\033[0m Progress', unit='batch', position=0, leave=True, dynamic_ncols=True)
         batch_losses, batch_metrics = [], []
         
         self.samples = {}

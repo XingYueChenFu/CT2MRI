@@ -1,4 +1,4 @@
-name: 'MTT-Net' # ⚠️ 默认: 'MTT-Net'，若不是，请改正
+name: 'MTT-Net-Reg' # ⚠️ 默认: 'MTT-Net'，若不是，请改正
 
 # ====== 重要参数 ======
 use_seed: false
@@ -10,6 +10,9 @@ isTrain: true # GAN_class.py需要（待优化）
 need_bugfree: true # ⚠️ 整活用私货，不需要请禁用
 
 use_Liu_dataset: true # 是否使用Liu数据集 # ⚠️默认: false，若不是，请改正
+# 其它：
+# 请在TRAINER修改是否use_reg
+
 # ===== DATASET ===== 
 preload: true # 直接放入内存
 
@@ -20,8 +23,9 @@ validation_ratio: 0.2 # 验证集比例
 train_root: [
   # '/home/featurize/data/Task1/brain',
   # '/home/featurize/data/Task1/pelvis',
-  '/home/featurize/data/Task1_N4BFC/brain',
+  # '/home/featurize/data/Task1_N4BFC/brain',
   # '/home/featurize/data/Task1_N4BFC/pelvis', # 尚未配准完
+  '/root/autodl-tmp/data/Task1_Liu_split_32/train'
 ]
 train_label: [
   # 0,
@@ -30,9 +34,10 @@ train_label: [
   # 1, # 尚未配准完
 ]
 
-need_test: false # 是否进行测试 # 不然不用加载test_root
+need_test: true # 是否进行测试 # 不然不用加载test_root
 test_root: [ # [not implemented]
-  '/home/featurize/data/Task1/brain', 
+  # '/home/featurize/data/Task1/brain', 
+  '/root/autodl-tmp/data/Task1_Liu_split_32/val', 
 ]
 test_label: [
   0
@@ -45,8 +50,8 @@ ignore_ids: [
 ]
 
 start_slice: 61 # 切片开始的位置（默认从数据中间取,start_slice不为-1时,从start_slice开始取）
-target_depth_size: 32 # 数据切留的厚度
-# target_depth_size: 64 # Liu给的数据 (batch_size:1 时，显存为 23 768 MB)
+# target_depth_size: 32 # 数据切留的厚度
+target_depth_size: 32 # Liu给的数据 (batch_size:1 时，不使用Reg，显存为 23 768 MB)
 target_image_size: 256 # 切片数据的H,W
 
 # ct窗位
@@ -65,7 +70,7 @@ isTrain: true # 是否训练
 
 start_epoch: 0 # 从第几轮开始训练 # 当不是0时，会尝试读取上次训练的模型
 num_epochs: 201 # 训练总轮数
-eval_interval: 5 # 每eval_interval代评估一次
+eval_interval: 1 # 每eval_interval代评估一次
 
 # 模型参数（不用看）
 input_nc: 1 # 输入通道数
@@ -98,7 +103,8 @@ lr_max: 0.0002 # 学习率
 gan_mode: 'vanilla' # GAN模式 [vanilla| lsgan ｜ wgangp] 如：vanilla: cross-entropy objective
 
 # 日志等需要的
-output_root: '/home/featurize/data/output' # 实际位置在 {log_dir}/{name}
+# output_root: '/home/featurize/data/output' # 实际位置在 {log_dir}/{name}
+output_root: '/root/autodl-tmp/output' # 实际位置在 {log_dir}/{name}
 
 # 保留的原始参数（待优化）
 Npatch: 24
@@ -109,7 +115,8 @@ continue_train: false # 是否继续训练(由start_epoch决定)
 
 # ===== 整活 =====
 bugfree:
-  bugfree_img_path: '/home/featurize/work/CT2MRI-MTTNet/util/bugfree_img/' # bugfree图片路径
+  # bugfree_img_path: '/home/featurize/work/CT2MRI-MTTNet/util/bugfree_img/' # bugfree图片路径
+  bugfree_img_path: './util/bugfree_img/' # bugfree图片路径
   img_name: buddha.bugfree # bugfree图片名称 # buddha.buggfree
   start_color: FF7EC7 # bugfree图片起始颜色
   end_color: FFED46 # bugfree图片结束颜色
@@ -122,19 +129,19 @@ Liu_dataset:
   # 训练CT数据路径
   trainCT_root: [
     # '/home/featurize/data/TRAINNING/CT',
-    '/home/featurize/data/Task1_Liu_split_32/train/CT'
+    '/root/autodl-tmp/data/Task1_Liu_split_32/train/CT'
   ]
   # 训练MR数据路径
   trainMR_root: [
-    '/home/featurize/data/Task1_Liu_split_32/train/MR',
+    '/root/autodl-tmp/data/Task1_Liu_split_32/train/MR',
   ]
   # 测试CT路径
   testCT_root: [
-    '/home/featurize/data/Task1_Liu_split_32/val/CT',
+    '/root/autodl-tmp/data/Task1_Liu_split_32/val/CT',
   ]
   # 测试MR路径 
   testMR_root: [
-    '/home/featurize/data/Task1_Liu_split_32/val/MR',
+    '/root/autodl-tmp/data/Task1_Liu_split_32/val/MR',
   ]
   preload: true  # 将dataset直接加入内存
 
