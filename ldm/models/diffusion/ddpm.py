@@ -16,7 +16,8 @@ from contextlib import contextmanager
 from functools import partial
 from tqdm import tqdm
 from torchvision.utils import make_grid
-from pytorch_lightning.utilities.distributed import rank_zero_only
+# from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_only
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma
@@ -880,8 +881,8 @@ class LatentDiffusion(DDPM):
 
     def _rescale_annotations(self, bboxes, crop_coordinates):  # TODO: move to dataset
         def rescale_bbox(bbox):
-            x0 = clamp((bbox[0] - crop_coordinates[0]) / crop_coordinates[2])
-            y0 = clamp((bbox[1] - crop_coordinates[1]) / crop_coordinates[3])
+            x0 = torch.clamp((bbox[0] - crop_coordinates[0]) / crop_coordinates[2])
+            y0 = torch.clamp((bbox[1] - crop_coordinates[1]) / crop_coordinates[3])
             w = min(bbox[2] / crop_coordinates[2], 1 - x0)
             h = min(bbox[3] / crop_coordinates[3], 1 - y0)
             return x0, y0, w, h
@@ -1086,8 +1087,8 @@ class LatentDiffusion(DDPM):
                                        return_x0=return_x0,
                                        score_corrector=score_corrector, corrector_kwargs=corrector_kwargs)
         if return_codebook_ids:
-            raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
+            raise DeprecationWarning("Support dropped.")
         elif return_x0:
             model_mean, _, model_log_variance, x0 = outputs
         else:

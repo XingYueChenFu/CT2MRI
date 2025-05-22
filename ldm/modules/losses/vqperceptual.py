@@ -39,6 +39,9 @@ def l1(x, y):
 def l2(x, y):
     return torch.pow((x-y), 2)
 
+def exists(x):
+    return x is not None and x is not False
+
 
 class VQLPIPSWithDiscriminator(nn.Module):
     def __init__(self, disc_start, codebook_weight=1.0, pixelloss_weight=1.0,

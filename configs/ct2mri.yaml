@@ -1,0 +1,54 @@
+model:
+  base_learning_rate: 1.0e-06
+  target: ldm.models.autoencoder.AutoencoderKL
+  params:
+    embed_dim: 4
+    monitor: val/loss
+    ddconfig:
+      double_z: True
+      z_channels: 4
+      resolution: 256
+      in_channels: 3  # 输入CT图像通道数
+      out_ch: 3       # 输出MRI图像通道数
+      ch: 128
+      ch_mult: [1,2,4,4]  # 通道倍增系数
+      num_res_blocks: 2    # 每个分辨率级别的残差块数
+      attn_resolutions: [] # 注意力层应用的分辨率
+      dropout: 0.0
+    lossconfig:
+      target: ldm.modules.losses.LPIPSWithDiscriminator
+      params:
+        disc_start: 50001  # 从多少步开始训练判别器
+        kl_weight: 1.0e-06  # KL散度权重
+        disc_weight: 0.5    # 判别器损失权重
+
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 4    # 根据你的GPU内存调整
+    num_workers: 4    # 数据加载线程数
+    train:
+      target: data.dataset.CT2MRIDataset  # 你的数据集类
+      params:
+        data_root: "/home/featurize/data/Task1_Liu_split/train"  # train_set的路径
+        image_size: 256
+        depth: 64 # 数据深度
+    validation:
+      target: data.dataset.CT2MRIDataset
+      params:
+        data_root: "/home/featurize/data/Task1_Liu_split/val"  # 可以使用相同路径，建议分出val_set
+        image_size: 256
+        depth: 64 # 数据深度
+
+lightning:
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 1000  # 每1000步记录一次图像
+        max_images: 8          # 每次记录的最大图像数
+        clamp: True
+  trainer:
+    benchmark: True
+    max_steps: 500000          # 最大训练步数
+    # gpus: 1                    # 使用GPU 0

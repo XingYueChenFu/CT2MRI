@@ -8,6 +8,12 @@ from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from ldm.modules.diffusionmodules.model import Encoder, Decoder
 from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 
+from ldm.modules.ema import LitEma # New
+import numpy as np # New
+from packaging import version # New
+from torch.optim.lr_scheduler import LambdaLR # New
+from tqdm import tqdm # New [DEBUG]
+
 from ldm.util import instantiate_from_config
 
 
@@ -280,6 +286,20 @@ class VQModelInterface(VQModel):
         quant = self.post_quant_conv(quant)
         dec = self.decoder(quant)
         return dec
+    
+    def get_input(self, batch, k='image'):
+        x = batch[k]
+        if len(x.shape) == 3:
+            x = x[..., None]
+        x = x.permute(0, 3, 1, 2).float().contiguous()
+        return x
+    
+    # NEW 感觉用原本VQModel会出Bug，因为encode不一样，输出的形状不一样
+    def forward(self, input): 
+        quant = self.encode(input)
+        dec = self.decode(quant)
+        return dec
+
 
 
 class AutoencoderKL(pl.LightningModule):

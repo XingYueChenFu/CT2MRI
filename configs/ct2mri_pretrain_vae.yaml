@@ -1,0 +1,72 @@
+model:
+  target: ldm.models.autoencoder.VQModel # [TODO] ldm.models.VQVAE.VQVAE
+  params:
+    embed_dim: 3            # latent channel 数 # [改]
+    n_embed: 8192           # codebook 大小
+    ddconfig:               # # Encoder与Decoder的配置
+      double_z: false       # 是否使用双通道(方差，均值)，true会出bug，形状不对
+      z_channels: 3         # latent channel 数 # [改]
+      resolution: 256       # 输入分辨率
+      in_channels: 3        # 输入通道数         # [改]
+      out_ch: 3             # 输出通道数         # [改]
+      ch: 128               # base channel 数
+      ch_mult:
+      - 1
+      - 2
+      - 4                  # 总共下采样 2 次 256 → 64
+      num_res_blocks: 2     # ResBlock 数量
+      attn_resolutions: []  # 不使用 attention
+      dropout: 0.0
+    # lossconfig:
+    #   target: ldm.modules.losses.LPIPSWithDiscriminator
+    #   params:
+    #     disc_start: 50000
+    #     kl_weight: 0.0
+    #     pixelloss_weight: 1.0
+    #     disc_weight: 0.5 # # GAN 判别器损失权重
+    #     perceptual_weight: 1.0
+    #     use_actnorm: False
+    #     disc_in_channels: 3  # 单通道 discriminator 输入# [改]
+    lossconfig:
+      target: ldm.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+      params:
+        disc_start: 50000      # 判别器开始训练的步数
+        codebook_weight: 1.0   # VQ码本损失的权重（新增！）
+        pixelloss_weight: 1.0  # 像素级L1/L2损失权重
+        disc_weight: 0.5       # 判别器损失权重
+        perceptual_weight: 1.0 # LPIPS感知损失权重
+        disc_num_layers: 3     # 判别器层数（新增！）
+        disc_in_channels: 3    # 判别器输入通道数
+        disc_ndf: 64           # 判别器初始通道数（新增！）
+        disc_loss: "hinge"     # GAN损失类型（hinge/vanilla）
+        use_actnorm: False     # 是否在判别器中使用ActNorm
+        pixel_loss: "l1"       # 像素损失类型（l1/l2）
+        perceptual_loss: "lpips" # 感知损失类型（lpips/clips/dists）
+
+data:
+  target: data.dataset.CT2MRIDataset # [TODO]
+  params:
+    # batch_size: 4
+    # train:
+    #   folder: /home/featurize/data/Task1_Liu_split/train # [TODO]
+    # validation:
+    #   folder: /home/featurize/data/Task1_Liu_split/val # [TODO]
+    # image_key: image        # 数据中的 key 名
+    # condition_key: condition
+    train:
+      folder: /home/featurize/data/Task1_Liu_split/train # [TODO]
+      batch_size: 4
+      num_workers: 4
+      use_rgb: true
+    validation:
+      folder: /home/featurize/data/Task1_Liu_split/val # [TODO]
+      batch_size: 4
+      num_workers: 4
+      use_rgb: true
+
+trainer:
+  max_epochs: 100
+  accelerator: "gpu"
+  devices: [0]
+  precision: 16
+  log_every_n_steps: 50
