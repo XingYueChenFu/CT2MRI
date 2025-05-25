@@ -68,12 +68,19 @@ def mean_flat(tensor):
     return tensor.mean(dim=list(range(1, len(tensor.shape))))
 
 
-def count_params(model, verbose=False):
+# def count_params(model, verbose=False):
+#     total_params = sum(p.numel() for p in model.parameters())
+#     if verbose:
+#         print(f"{model.__class__.__name__} has {total_params * 1.e-6:.2f} M params.")
+#     return total_params
+
+def count_params(model, verbose=False, count_buffers=False):
     total_params = sum(p.numel() for p in model.parameters())
+    if count_buffers:
+        total_params += sum(b.numel() for b in model.buffers())
     if verbose:
         print(f"{model.__class__.__name__} has {total_params * 1.e-6:.2f} M params.")
     return total_params
-
 
 def instantiate_from_config(config):
     if not "target" in config:

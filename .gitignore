@@ -5,6 +5,7 @@ taming/
 src/
 clip/
 taming-transformers/
+models/bert/
 
 *.ckpt
 *.bin

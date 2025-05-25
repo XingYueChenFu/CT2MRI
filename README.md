@@ -26,9 +26,20 @@ rm ../../data/nii -r # 删除原始数据
 # ===== 划分数据集 =====
 python ./data/Liu_split.py
 # rm ../../data/Task1_Liu -r # 删除未划分的数据
+
+# ===== 复制并解压预训练模型 =====
+cd ../..
+cp ./work/output.7z ./
+7z x output.7z
+rm output.7z
+
+# 进入工作目录
+cd work/CT2MRI-LDM
 ```
 
 #### 分步
+
+> 执行了**汇总**后，不要再分步执行
 
 下载
 ```bash
@@ -49,6 +60,14 @@ rm ../../data/nii -r # 删除原始数据
 ```bash
 python ./data/Liu_split.py
 # rm ../../data/Task1_Liu -r # 删除未划分的数据
+```
+
+解压：预训练的VAE
+```bash
+cd ../..
+cp ./work/output.7z ./
+7z x output.7z
+rm output.7z
 ```
 
 ### 创建虚拟环境
@@ -85,5 +104,11 @@ python solver2.py --base configs/ct2mri_pretrain_vae.yaml --train
 ```
 
 #### 3. 训练LDM
-
+```bash
+python solver3.py --base configs/ct2mri_ldm.yaml --train
+```
 TODO
+
+
+
+快出现吧【天选 の 随机种子】🎯

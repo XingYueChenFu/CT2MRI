@@ -2,87 +2,135 @@ model:
   base_learning_rate: 1.0e-06
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
-    linear_start: 0.00085
-    linear_end: 0.0120
+    linear_start: 0.0015
+    linear_end: 0.0195
     num_timesteps_cond: 1
     log_every_t: 200
     timesteps: 1000
-    first_stage_key: "image"
-    cond_stage_key: "condition"
-    image_size: 256
-    channels: 3
-    cond_stage_trainable: false
-    conditioning_key: crossattn
-    monitor: val/loss_simple_ema
-    scale_factor: 0.18215
-    use_ema: True
-    first_stage_config:
-      target: ldm.models.autoencoder.AutoencoderKL
-      params:
-        embed_dim: 4
-        monitor: val/rec_loss
-        ddconfig:
-          double_z: true
-          z_channels: 4
-          resolution: 256
-          in_channels: 3
-          out_ch: 3
-          ch: 128
-          ch_mult: [1,2,4,4]
-          num_res_blocks: 2
-          attn_resolutions: []
-          dropout: 0.0
-        lossconfig:
-          target: ldm.modules.losses.LPIPSWithDiscriminator
-          params:
-            disc_start: 50001
-            kl_weight: 1.0e-06
-            disc_weight: 0.5
-    cond_stage_config: __is_first_stage__
+    first_stage_key: "image"          # MRI数据
+    cond_stage_key: "condition"       # CT数据（需与数据加载逻辑一致）
+    image_size: 64                    # 隐变量空间尺寸（64x64）
+    channels: 3                       # MRI原始输入通道数（3）
+    cond_stage_trainable: false       # 如果CT的VAE不训练则设为false
+    conditioning_key: "concat"        # 关键修改：使用拼接条件 # ❌ 启用[concat]方案，请改为这个
+    # conditioning_key: "crossattn"   # ✅ 启用[cross-atten]方案，请改为这个
+    monitor: "val/loss_simple_ema"
+    
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
-        image_size: 32
-        in_channels: 4
-        out_channels: 4
-        model_channels: 320
-        attention_resolutions: [4, 2, 1]
+        image_size: 64                # 隐变量空间尺寸
+        in_channels: 6                # MRI(3) + CT(3)拼接后的通道数 # ❌ 启用[concat]方案，请改为这个
+        # in_channels: 3              # MRI原始输入通道数（3）# ✅ 启用[cross-atten]方案，请改为这个
+        out_channels: 3               # 输出MRI的通道数（3）
+        model_channels: 256
+        attention_resolutions:
+          - 4                         # 64/4=16x16分辨率注意力
+          - 2                         # 32x32
+          - 1                         # 64x64
         num_res_blocks: 2
-        channel_mult: [1, 2, 4, 4]
-        num_heads: 8
-        use_spatial_transformer: true
-        transformer_depth: 1
-        context_dim: 4
-        use_checkpoint: true
-        legacy: false
-
+        channel_mult:
+          - 1
+          - 2
+          - 4
+        num_head_channels: 8 # 32
+        # num_heads: 1 # 原来是num_heads，与num_head_channels通样作用
+        use_spatial_transformer: false # 如果不用交叉注意力则关闭 (及concat)        # ❌ 启用[concat]方案，请改为这个
+        transformer_depth: 1           # 可移除（若use_spatial_transformer=false） # ❌ 启用[concat]方案，请改为这个
+        context_dim: null              # 无需交叉注意力时设为null                   # ❌ 启用[concat]方案，请改为这个
+        # use_spatial_transformer: true # ✅ 启用[cross-atten]方案，请改为这个
+        # transformer_depth: 1          # ✅ 启用[cross-atten]方案，请改为这个
+        # context_dim: 3                # ✅ 启用[cross-atten]方案，请改为这个
+    
+    # 其它的模型config [TODO]
+    first_stage_config:
+      target: ldm.models.autoencoder.VQModel # [TODO] ldm.models.VQVAE.VQVAE
+      params:
+        embed_dim: 3            # latent channel 数 # [改]
+        n_embed: 8192           # codebook 大小
+        ddconfig:               # # Encoder与Decoder的配置
+          double_z: false       # 是否使用双通道(方差，均值)，true会出bug，形状不对
+          z_channels: 3         # latent channel 数 # [改]
+          resolution: 256       # 输入分辨率
+          in_channels: 3        # 输入通道数         # [改]
+          out_ch: 3             # 输出通道数         # [改]
+          ch: 128               # base channel 数
+          ch_mult:
+          - 1
+          - 2
+          - 4                  # 总共下采样 2 次 256 → 64
+          num_res_blocks: 2     # ResBlock 数量
+          attn_resolutions: []  # 不使用 attention
+          dropout: 0.0
+        lossconfig:
+          target: ldm.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+          params:
+            disc_start: 50000      # 判别器开始训练的步数
+            codebook_weight: 1.0   # VQ码本损失的权重（新增！）
+            pixelloss_weight: 1.0  # 像素级L1/L2损失权重
+            disc_weight: 0.5       # 判别器损失权重
+            perceptual_weight: 1.0 # LPIPS感知损失权重
+            disc_num_layers: 3     # 判别器层数（新增！）
+            disc_in_channels: 3    # 判别器输入通道数
+            disc_ndf: 64           # 判别器初始通道数（新增！）
+            disc_loss: "hinge"     # GAN损失类型（hinge/vanilla）
+            use_actnorm: False     # 是否在判别器中使用ActNorm
+            pixel_loss: "l1"       # 像素损失类型（l1/l2）
+            perceptual_loss: "lpips" # 感知损失类型（lpips/clips/dists）
+    
+    cond_stage_config:
+      target: ldm.models.autoencoder.VQModel # [TODO] ldm.models.VQVAE.VQVAE
+      params:
+        embed_dim: 3            # latent channel 数 # [改]
+        n_embed: 8192           # codebook 大小
+        ddconfig:               # # Encoder与Decoder的配置
+          double_z: false       # 是否使用双通道(方差，均值)，true会出bug，形状不对
+          z_channels: 3         # latent channel 数 # [改]
+          resolution: 256       # 输入分辨率
+          in_channels: 3        # 输入通道数         # [改]
+          out_ch: 3             # 输出通道数         # [改]
+          ch: 128               # base channel 数
+          ch_mult:
+          - 1
+          - 2
+          - 4                  # 总共下采样 2 次 256 → 64
+          num_res_blocks: 2     # ResBlock 数量
+          attn_resolutions: []  # 不使用 attention
+          dropout: 0.0
+        lossconfig:
+          target: ldm.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+          params:
+            disc_start: 50000      # 判别器开始训练的步数
+            codebook_weight: 1.0   # VQ码本损失的权重（新增！）
+            pixelloss_weight: 1.0  # 像素级L1/L2损失权重
+            disc_weight: 0.5       # 判别器损失权重
+            perceptual_weight: 1.0 # LPIPS感知损失权重
+            disc_num_layers: 3     # 判别器层数（新增！）
+            disc_in_channels: 3    # 判别器输入通道数
+            disc_ndf: 64           # 判别器初始通道数（新增！）
+            disc_loss: "hinge"     # GAN损失类型（hinge/vanilla）
+            use_actnorm: False     # 是否在判别器中使用ActNorm
+            pixel_loss: "l1"       # 像素损失类型（l1/l2）
+            perceptual_loss: "lpips" # 感知损失类型（lpips/clips/dists）
+# data config
 data:
-  target: main.DataModuleFromConfig
+  target: data.dataset.CT2MRIDataset # [TODO]
   params:
-    batch_size: 4
-    num_workers: 4
+    # batch_size: 4
+    # train:
+    #   folder: /home/featurize/data/Task1_Liu_split/train # [TODO]
+    # validation:
+    #   folder: /home/featurize/data/Task1_Liu_split/val # [TODO]
+    # image_key: image        # 数据中的 key 名
+    # condition_key: condition
     train:
-      target: data.dataset.CT2MRIDataset
-      params:
-        data_root: "/home/featurize/data/Task1_Liu_split/train"
-        image_size: 256
-        depth: 64
+      folder: /home/featurize/data/Task1_Liu_split/train # [TODO]
+      batch_size: 1
+      num_workers: 0
+      use_rgb: true
     validation:
-      target: data.dataset.CT2MRIDataset
-      params:
-        data_root: "/home/featurize/data/Task1_Liu_split/val"
-        image_size: 256
-        depth: 64
-
-lightning:
-  callbacks:
-    image_logger:
-      target: main.ImageLogger
-      params:
-        batch_frequency: 1000
-        max_images: 8
-        clamp: true
-  trainer:
-    benchmark: true
-    max_steps: 500000
-    gpus: 1 
+      folder: /home/featurize/data/Task1_Liu_split/val # [TODO]
+      batch_size: 1
+      num_workers: 0
+      use_rgb: true
+  

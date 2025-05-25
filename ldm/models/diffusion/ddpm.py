@@ -72,6 +72,7 @@ class DDPM(pl.LightningModule):
                  use_positional_encodings=False,
                  learn_logvar=False,
                  logvar_init=0.,
+                 *args, **kwargs,
                  ):
         super().__init__()
         assert parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
@@ -1444,3 +1445,790 @@ class Layout2ImgDiffusion(LatentDiffusion):
         cond_img = torch.stack(bbox_imgs, dim=0)
         logs['bbox_image'] = cond_img
         return logs
+
+
+class LDM(nn.Module):
+    def __init__(self, params, mri_vae_model, ct_vae_model, *args, **kwargs):
+        # super().__init__(unet_config, conditioning_key) # 没传参数
+        super().__init__() # 传入参数
+        self.unet_config=params["unet_config"]
+        self.image_size=params["image_size"]
+        self.channels=params["channels"]
+        self.conditioning_key=params["conditioning_key"]
+        # 构建Unet，读取两个VAE模型
+        # self.unet = DDPM(unet_config, conditioning_key) # 构建
+        self.params = params 
+        self.model = DiffusionWrapper(params.unet_config, params.conditioning_key)
+        count_params(self.model, verbose=True)
+        # self.use_ema = params.use_ema
+        # if self.use_ema:
+        #     self.model_ema = LitEma(self.model)
+        #     print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+        self.unet = self.model # 将初始化的结果赋值给self.unet
+        self.unet.requires_grad_(True).train() #
+        self.mri_vae = mri_vae_model # 读取
+        self.mri_vae.requires_grad_(False).eval() #
+        self.ct_vae = ct_vae_model # 读取
+        self.ct_vae.requires_grad_(False).eval() #
+        
+        self.device = self.ct_vae.device
+        
+        # TODO
+        # 从args获取额外参数
+        self.timesteps = kwargs.get('timesteps', 1000) # 默认1000
+        self.loss_type = kwargs.get('loss_type', 'l2') # 默认l2
+        self.parameterization = kwargs.get('parameterization', 'eps') # 默认eps
+        
+        self.v_posterior = kwargs.get('v_posterior', 0.0) # 默认0.0
+        self.l_simple_weight = kwargs.get('l_simple_weight', 1.0) # 默认1.0
+        self.original_elbo_weight = kwargs.get('original_elbo_weight', 0.0)
+        self.use_scheduler = kwargs.get('use_scheduler', False) # 默认True
+        
+        self.given_betas = kwargs.get('given_betas', None) # 默认None
+        self.beta_schedule = kwargs.get('beta_schedule', 'linear') # 默认linear
+        self.linear_start = kwargs.get('linear_start', 1e-4) # 默认1e-4
+        self.linear_end = kwargs.get('linear_end', 2e-2)
+        self.cosine_s = kwargs.get('cosine_s', 8e-3)
+        
+        
+        # 注册调度器
+        self.register_schedule(given_betas=self.given_betas, beta_schedule=self.beta_schedule, timesteps=self.timesteps,
+                               linear_start=self.linear_start, linear_end=self.linear_end, cosine_s=self.cosine_s)
+        # 参数以及buffer占用的显存
+        print(f"\033[1;34m[INFO]\033[0m Model's 'self' on device {self.device} with {count_params(self, count_buffers=True)*4/(1024**2):.2f} MB parameters.")
+        
+    def register_schedule(self, given_betas=None, beta_schedule="linear", timesteps=1000,
+                          linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
+        if exists(given_betas):
+            betas = given_betas
+        else:
+            betas = make_beta_schedule(beta_schedule, timesteps, linear_start=linear_start, linear_end=linear_end,
+                                       cosine_s=cosine_s)
+        alphas = 1. - betas
+        alphas_cumprod = np.cumprod(alphas, axis=0)
+        alphas_cumprod_prev = np.append(1., alphas_cumprod[:-1])
+
+        timesteps, = betas.shape
+        self.num_timesteps = int(timesteps)
+        self.linear_start = linear_start
+        self.linear_end = linear_end
+        assert alphas_cumprod.shape[0] == self.num_timesteps, 'alphas have to be defined for each timestep'
+
+        to_torch = partial(torch.tensor, dtype=torch.float32)
+
+        self.register_buffer('betas', to_torch(betas).to(self.device))
+        self.register_buffer('alphas_cumprod', to_torch(alphas_cumprod).to(self.device))
+        self.register_buffer('alphas_cumprod_prev', to_torch(alphas_cumprod_prev).to(self.device))
+
+        # calculations for diffusion q(x_t | x_{t-1}) and others
+        self.register_buffer('sqrt_alphas_cumprod', to_torch(np.sqrt(alphas_cumprod)).to(self.device))
+        self.register_buffer('sqrt_one_minus_alphas_cumprod', to_torch(np.sqrt(1. - alphas_cumprod)).to(self.device))
+        self.register_buffer('log_one_minus_alphas_cumprod', to_torch(np.log(1. - alphas_cumprod)).to(self.device))
+        self.register_buffer('sqrt_recip_alphas_cumprod', to_torch(np.sqrt(1. / alphas_cumprod)).to(self.device))
+        self.register_buffer('sqrt_recipm1_alphas_cumprod', to_torch(np.sqrt(1. / alphas_cumprod - 1)).to(self.device))
+
+        # calculations for posterior q(x_{t-1} | x_t, x_0)
+        posterior_variance = (1 - self.v_posterior) * betas * (1. - alphas_cumprod_prev) / (
+                    1. - alphas_cumprod) + self.v_posterior * betas
+        # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
+        self.register_buffer('posterior_variance', to_torch(posterior_variance).to(self.device))
+        # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
+        self.register_buffer('posterior_log_variance_clipped', to_torch(np.log(np.maximum(posterior_variance, 1e-20))).to(self.device))
+        self.register_buffer('posterior_mean_coef1', to_torch(
+            betas * np.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod)).to(self.device))
+        self.register_buffer('posterior_mean_coef2', to_torch(
+            (1. - alphas_cumprod_prev) * np.sqrt(alphas) / (1. - alphas_cumprod)).to(self.device))
+
+        if self.parameterization == "eps":
+            lvlb_weights = self.betas ** 2 / (
+                        2 * self.posterior_variance * to_torch(alphas).to(self.device) * (1 - self.alphas_cumprod))
+        elif self.parameterization == "x0":
+            lvlb_weights = 0.5 * np.sqrt(torch.Tensor(alphas_cumprod)) / (2. * 1 - torch.Tensor(alphas_cumprod))
+        else:
+            raise NotImplementedError("mu not supported")
+        # TODO how to choose this term
+        lvlb_weights[0] = lvlb_weights[1]
+        self.register_buffer('lvlb_weights', lvlb_weights.to(self.device), persistent=False)
+        assert not torch.isnan(self.lvlb_weights).all() 
+        
+    def get_loss(self, pred, target, mean=True):
+        if self.loss_type == 'l1':
+            loss = (target - pred).abs()
+            if mean:
+                loss = loss.mean()
+        elif self.loss_type == 'l2':
+            if mean:
+                loss = torch.nn.functional.mse_loss(target, pred)
+            else:
+                loss = torch.nn.functional.mse_loss(target, pred, reduction='none')
+        else:
+            raise NotImplementedError("unknown loss type '{loss_type}'")
+
+        return loss
+
+    def q_sample(self, x_start, t, noise=None):
+        noise = default(noise, lambda: torch.randn_like(x_start))
+        return (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+                extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+        
+    def p_losses(self, x_start, t, noise=None, cond=None):
+        noise = default(noise, lambda: torch.randn_like(x_start))
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)  # 加噪声
+
+        # 加上条件输入（来自CT） # concat需要传入context=[cond]而非context=cond
+        if self.model.conditioning_key == 'concat':
+            model_out = self.model(x_noisy, t, c_concat=[cond])
+        elif self.model.conditioning_key == 'crossattn':
+            model_out = self.model(x_noisy, t, c_crossattn=[cond])
+
+
+        # 计算目标：是去噪结果 (eps) 还是原始 latent (x0)
+        loss_dict = {}
+        if self.parameterization == "eps":
+            target = noise
+        elif self.parameterization == "x0":
+            target = x_start
+        else:
+            raise NotImplementedError(f"Parameterization {self.parameterization} not supported")
+
+        loss = self.get_loss(model_out, target, mean=False).mean(dim=[1, 2, 3])
+
+        log_prefix = 'train' if self.training else 'val'
+
+        loss_dict[f'{log_prefix}/loss_simple'] = loss.mean()
+        loss_simple = loss.mean() * self.l_simple_weight
+
+        loss_vlb = (self.lvlb_weights[t] * loss).mean()
+        loss_dict[f'{log_prefix}/loss_vlb'] = loss_vlb
+
+        final_loss = loss_simple + self.original_elbo_weight * loss_vlb
+        loss_dict[f'{log_prefix}/loss'] = final_loss
+
+        return final_loss, loss_dict
+        
+    # TODO 
+    def forward(self, batch, *args, **kwargs):
+        # 1. 从batch中取出ct和mri图像
+        ct = batch["image"]         # (B, 3, 256, 256)
+        mri = batch["condition"]    # (B, 3, 256, 256)
+
+        # 2. 编码为 latent 表示
+        with torch.no_grad():
+            ct_latent, _, _ = self.ct_vae.encode(ct)       # 条件输入
+            mri_latent, _, _ = self.mri_vae.encode(mri)    # 目标预测值
+
+        # 3. 采样时间步 t
+        t = torch.randint(0, self.num_timesteps, (mri_latent.shape[0],), device=mri_latent.device).long() # mri_latent.device = cuda:0
+
+        # 4. 计算损失
+        return self.p_losses(mri_latent, t, cond=ct_latent)
+
+    def training_step(self, batch, batch_idx):
+        loss, loss_dict = self.forward(batch)
+
+        # self.log_dict(loss_dict, prog_bar=True, # pl.LightningModule类的
+        #             logger=True, on_step=True, on_epoch=True)
+
+        if self.use_scheduler:
+            lr = self.optimizers().param_groups[0]['lr']
+            self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+
+        return loss
+    
+    @torch.no_grad()
+    def validation_step(self, batch, batch_idx):
+        loss, loss_dict = self.forward(batch)
+
+        return loss
+    
+    # def predict_start_from_noise(self, x_t, t, noise): # generate用
+    #     return (
+    #         1.0 / torch.sqrt(self.alphas_cumprod[t]) * x_t -
+    #         torch.sqrt(1 - self.alphas_cumprod[t]) / torch.sqrt(self.alphas_cumprod[t]) * noise
+    #     )
+        
+    def predict_start_from_noise(self, x_t, t, noise): # 原始
+        return (
+                extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
+                extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+        )
+
+    
+    @torch.no_grad()
+    def generate(self, ct, num_steps=None, seed=None):
+        """
+        根据输入的CT图像生成MRI图像。
+
+        Args:
+            ct (Tensor): 输入CT图像，shape = [B, 3, 256, 256]
+            num_steps (int): 指定采样步数（可选，默认用模型训练的步数）
+            seed (int): 随机种子（可选）
+
+        Returns:
+            Tensor: 重建的MRI图像，shape = [B, 3, 256, 256]
+        """
+        device = ct.device
+        batch_size = ct.shape[0]
+
+        if seed is not None:
+            torch.manual_seed(seed)
+        
+        # 1. 编码CT到latent作为条件输入
+        ct_latent, _, _ = self.ct_vae.encode(ct)  # (B, 3, 64, 64)
+        # 2. 初始化随机噪声 MRI latent
+        shape = ct_latent.shape  # (B, 3, 64, 64)
+        z = torch.randn(shape, device=device)
+
+        # 3. 获取时间步列表（倒序）
+        timesteps = reversed(range(0, self.num_timesteps if num_steps is None else num_steps))
+
+        for t in timesteps:
+            t_tensor = torch.full((batch_size,), t, device=device, dtype=torch.long)
+            # 如果模型使用了条件输入，则将CT latent作为条件
+            if self.model.conditioning_key == 'concat':
+                model_out = self.model(z, t_tensor, c_concat=[ct_latent])
+            elif self.model.conditioning_key == 'crossattn':
+                model_out = self.model(z, t_tensor, c_crossattn=[ct_latent])
+            else:
+                model_out = self.model(z, t_tensor)
+            # 模型预测当前的 denoise 结果（eps 或 x0）
+            if self.parameterization == "eps":
+                pred_x0 = self.predict_start_from_noise(z, t_tensor, model_out)
+            elif self.parameterization == "x0":
+                pred_x0 = model_out
+            else:
+                raise NotImplementedError()
+
+            # 根据 DDPM 的反向过程更新 z
+            # z = self.p_sample(z, t_tensor, pred_x0)
+            z = self.p_sample(z, c=pred_x0, t=t_tensor)
+
+        # 4. 解码MRI latent 为MRI图像
+        mri = self.mri_vae.decode(z)  # [B, 3, 256, 256]
+
+        return mri
+    
+    @torch.no_grad()
+    def p_sample(self, x, c, t, clip_denoised=False, repeat_noise=False,
+                 return_codebook_ids=False, quantize_denoised=False, return_x0=False,
+                 temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None):
+        b, *_, device = *x.shape, x.device
+        outputs = self.p_mean_variance(x=x, c=c, t=t, clip_denoised=clip_denoised,
+                                       return_codebook_ids=return_codebook_ids,
+                                       quantize_denoised=quantize_denoised,
+                                       return_x0=return_x0,
+                                       score_corrector=score_corrector, corrector_kwargs=corrector_kwargs)
+        if return_codebook_ids:
+            model_mean, _, model_log_variance, logits = outputs
+            raise DeprecationWarning("Support dropped.")
+        elif return_x0:
+            model_mean, _, model_log_variance, x0 = outputs
+        else:
+            model_mean, _, model_log_variance = outputs
+
+        noise = noise_like(x.shape, device, repeat_noise) * temperature
+        if noise_dropout > 0.:
+            noise = torch.nn.functional.dropout(noise, p=noise_dropout)
+        # no noise when t == 0
+        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
+
+        if return_codebook_ids:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, logits.argmax(dim=1)
+        if return_x0:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, x0
+        else:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+
+    # def p_losses(self, x_start, cond, t, noise=None):
+    #     noise = default(noise, lambda: torch.randn_like(x_start))
+    #     x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+    #     model_output = self.apply_model(x_noisy, t, cond)
+
+    #     loss_dict = {}
+    #     prefix = 'train' if self.training else 'val'
+
+    #     if self.parameterization == "x0":
+    #         target = x_start
+    #     elif self.parameterization == "eps":
+    #         target = noise
+    #     else:
+    #         raise NotImplementedError()
+
+    #     loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+    #     loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
+
+    #     logvar_t = self.logvar[t].to(self.device)
+    #     loss = loss_simple / torch.exp(logvar_t) + logvar_t
+    #     # loss = loss_simple / torch.exp(self.logvar) + self.logvar
+    #     if self.learn_logvar:
+    #         loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
+    #         loss_dict.update({'logvar': self.logvar.data.mean()})
+
+    #     loss = self.l_simple_weight * loss.mean()
+
+    #     loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
+    #     loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+    #     loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
+    #     loss += (self.original_elbo_weight * loss_vlb)
+    #     loss_dict.update({f'{prefix}/loss': loss})
+
+    #     return loss, loss_dict
+
+    def p_mean_variance(self, x, c, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
+                        return_x0=False, score_corrector=None, corrector_kwargs=None):
+        t_in = t
+        model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+
+        if score_corrector is not None:
+            assert self.parameterization == "eps"
+            model_out = score_corrector.modify_score(self, model_out, x, t, c, **corrector_kwargs)
+
+        if return_codebook_ids:
+            model_out, logits = model_out
+
+        if self.parameterization == "eps":
+            x_recon = self.predict_start_from_noise(x, t=t, noise=model_out)
+        elif self.parameterization == "x0":
+            x_recon = model_out
+        else:
+            raise NotImplementedError()
+
+        if clip_denoised:
+            x_recon.clamp_(-1., 1.)
+        if quantize_denoised:
+            x_recon, _, [_, _, indices] = self.first_stage_model.quantize(x_recon)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
+        if return_codebook_ids:
+            return model_mean, posterior_variance, posterior_log_variance, logits
+        elif return_x0:
+            return model_mean, posterior_variance, posterior_log_variance, x_recon
+        else:
+            return model_mean, posterior_variance, posterior_log_variance
+
+    @torch.no_grad()
+    def p_sample(self, x, c, t, clip_denoised=False, repeat_noise=False,
+                 return_codebook_ids=False, quantize_denoised=False, return_x0=False,
+                 temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None):
+        b, *_, device = *x.shape, x.device
+        outputs = self.p_mean_variance(x=x, c=c, t=t, clip_denoised=clip_denoised,
+                                       return_codebook_ids=return_codebook_ids,
+                                       quantize_denoised=quantize_denoised,
+                                       return_x0=return_x0,
+                                       score_corrector=score_corrector, corrector_kwargs=corrector_kwargs)
+        if return_codebook_ids:
+            model_mean, _, model_log_variance, logits = outputs
+            raise DeprecationWarning("Support dropped.")
+        elif return_x0:
+            model_mean, _, model_log_variance, x0 = outputs
+        else:
+            model_mean, _, model_log_variance = outputs
+
+        noise = noise_like(x.shape, device, repeat_noise) * temperature
+        if noise_dropout > 0.:
+            noise = torch.nn.functional.dropout(noise, p=noise_dropout)
+        # no noise when t == 0
+        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
+
+        if return_codebook_ids:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, logits.argmax(dim=1)
+        if return_x0:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise, x0
+        else:
+            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+
+    @torch.no_grad()
+    def progressive_denoising(self, cond, shape, verbose=True, callback=None, quantize_denoised=False,
+                              img_callback=None, mask=None, x0=None, temperature=1., noise_dropout=0.,
+                              score_corrector=None, corrector_kwargs=None, batch_size=None, x_T=None, start_T=None,
+                              log_every_t=None):
+        if not log_every_t:
+            log_every_t = self.log_every_t
+        timesteps = self.num_timesteps
+        if batch_size is not None:
+            b = batch_size if batch_size is not None else shape[0]
+            shape = [batch_size] + list(shape)
+        else:
+            b = batch_size = shape[0]
+        if x_T is None:
+            img = torch.randn(shape, device=self.device)
+        else:
+            img = x_T
+        intermediates = []
+        if cond is not None:
+            if isinstance(cond, dict):
+                cond = {key: cond[key][:batch_size] if not isinstance(cond[key], list) else
+                list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
+            else:
+                cond = [c[:batch_size] for c in cond] if isinstance(cond, list) else cond[:batch_size]
+
+        if start_T is not None:
+            timesteps = min(timesteps, start_T)
+        iterator = tqdm(reversed(range(0, timesteps)), desc='Progressive Generation',
+                        total=timesteps) if verbose else reversed(
+            range(0, timesteps))
+        if type(temperature) == float:
+            temperature = [temperature] * timesteps
+
+        for i in iterator:
+            ts = torch.full((b,), i, device=self.device, dtype=torch.long)
+            if self.shorten_cond_schedule:
+                assert self.model.conditioning_key != 'hybrid'
+                tc = self.cond_ids[ts].to(cond.device)
+                cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
+
+            img, x0_partial = self.p_sample(img, cond, ts,
+                                            clip_denoised=self.clip_denoised,
+                                            quantize_denoised=quantize_denoised, return_x0=True,
+                                            temperature=temperature[i], noise_dropout=noise_dropout,
+                                            score_corrector=score_corrector, corrector_kwargs=corrector_kwargs)
+            if mask is not None:
+                assert x0 is not None
+                img_orig = self.q_sample(x0, ts)
+                img = img_orig * mask + (1. - mask) * img
+
+            if i % log_every_t == 0 or i == timesteps - 1:
+                intermediates.append(x0_partial)
+            if callback: callback(i)
+            if img_callback: img_callback(img, i)
+        return img, intermediates
+
+    @torch.no_grad()
+    def p_sample_loop(self, cond, shape, return_intermediates=False,
+                      x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
+                      mask=None, x0=None, img_callback=None, start_T=None,
+                      log_every_t=None):
+
+        if not log_every_t:
+            log_every_t = self.log_every_t
+        device = self.betas.device
+        b = shape[0]
+        if x_T is None:
+            img = torch.randn(shape, device=device)
+        else:
+            img = x_T
+
+        intermediates = [img]
+        if timesteps is None:
+            timesteps = self.num_timesteps
+
+        if start_T is not None:
+            timesteps = min(timesteps, start_T)
+        iterator = tqdm(reversed(range(0, timesteps)), desc='Sampling t', total=timesteps) if verbose else reversed(
+            range(0, timesteps))
+
+        if mask is not None:
+            assert x0 is not None
+            assert x0.shape[2:3] == mask.shape[2:3]  # spatial size has to match
+
+        for i in iterator:
+            ts = torch.full((b,), i, device=device, dtype=torch.long)
+            if self.shorten_cond_schedule:
+                assert self.model.conditioning_key != 'hybrid'
+                tc = self.cond_ids[ts].to(cond.device)
+                cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
+
+            img = self.p_sample(img, cond, ts,
+                                clip_denoised=self.clip_denoised,
+                                quantize_denoised=quantize_denoised)
+            if mask is not None:
+                img_orig = self.q_sample(x0, ts)
+                img = img_orig * mask + (1. - mask) * img
+
+            if i % log_every_t == 0 or i == timesteps - 1:
+                intermediates.append(img)
+            if callback: callback(i)
+            if img_callback: img_callback(img, i)
+
+        if return_intermediates:
+            return img, intermediates
+        return img
+
+    @torch.no_grad()
+    def sample(self, cond, batch_size=16, return_intermediates=False, x_T=None,
+               verbose=True, timesteps=None, quantize_denoised=False,
+               mask=None, x0=None, shape=None,**kwargs):
+        if shape is None:
+            shape = (batch_size, self.channels, self.image_size, self.image_size)
+        if cond is not None:
+            if isinstance(cond, dict):
+                cond = {key: cond[key][:batch_size] if not isinstance(cond[key], list) else
+                list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
+            else:
+                cond = [c[:batch_size] for c in cond] if isinstance(cond, list) else cond[:batch_size]
+        return self.p_sample_loop(cond,
+                                  shape,
+                                  return_intermediates=return_intermediates, x_T=x_T,
+                                  verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
+                                  mask=mask, x0=x0)
+
+    @torch.no_grad()
+    def sample_log(self,cond,batch_size,ddim, ddim_steps,**kwargs):
+
+        if ddim:
+            ddim_sampler = DDIMSampler(self)
+            shape = (self.channels, self.image_size, self.image_size)
+            samples, intermediates =ddim_sampler.sample(ddim_steps,batch_size,
+                                                        shape,cond,verbose=False,**kwargs)
+
+        else:
+            samples, intermediates = self.sample(cond=cond, batch_size=batch_size,
+                                                 return_intermediates=True,**kwargs)
+
+        return samples, intermediates
+
+
+    @torch.no_grad()
+    def log_images(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+                   quantize_denoised=True, inpaint=True, plot_denoise_rows=False, plot_progressive_rows=True,
+                   plot_diffusion_rows=True, **kwargs):
+
+        use_ddim = ddim_steps is not None
+
+        log = dict()
+        z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
+                                           return_first_stage_outputs=True,
+                                           force_c_encode=True,
+                                           return_original_cond=True,
+                                           bs=N)
+        N = min(x.shape[0], N)
+        n_row = min(x.shape[0], n_row)
+        log["inputs"] = x
+        log["reconstruction"] = xrec
+        if self.model.conditioning_key is not None:
+            if hasattr(self.cond_stage_model, "decode"):
+                xc = self.cond_stage_model.decode(c)
+                log["conditioning"] = xc
+            elif self.cond_stage_key in ["caption"]:
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["caption"])
+                log["conditioning"] = xc
+            elif self.cond_stage_key == 'class_label':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
+                log['conditioning'] = xc
+            elif isimage(xc):
+                log["conditioning"] = xc
+            if ismap(xc):
+                log["original_conditioning"] = self.to_rgb(xc)
+
+        if plot_diffusion_rows:
+            # get diffusion row
+            diffusion_row = list()
+            z_start = z[:n_row]
+            for t in range(self.num_timesteps):
+                if t % self.log_every_t == 0 or t == self.num_timesteps - 1:
+                    t = repeat(torch.tensor([t]), '1 -> b', b=n_row)
+                    t = t.to(self.device).long()
+                    noise = torch.randn_like(z_start)
+                    z_noisy = self.q_sample(x_start=z_start, t=t, noise=noise)
+                    diffusion_row.append(self.decode_first_stage(z_noisy))
+
+            diffusion_row = torch.stack(diffusion_row)  # n_log_step, n_row, C, H, W
+            diffusion_grid = rearrange(diffusion_row, 'n b c h w -> b n c h w')
+            diffusion_grid = rearrange(diffusion_grid, 'b n c h w -> (b n) c h w')
+            diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
+            log["diffusion_row"] = diffusion_grid
+
+        if sample:
+            # get denoise row
+            with self.ema_scope("Plotting"):
+                samples, z_denoise_row = self.sample_log(cond=c,batch_size=N,ddim=use_ddim,
+                                                         ddim_steps=ddim_steps,eta=ddim_eta)
+                # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True)
+            x_samples = self.decode_first_stage(samples)
+            log["samples"] = x_samples
+            if plot_denoise_rows:
+                denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
+                log["denoise_row"] = denoise_grid
+
+            if quantize_denoised and not isinstance(self.first_stage_model, AutoencoderKL) and not isinstance(
+                    self.first_stage_model, IdentityFirstStage):
+                # also display when quantizing x0 while sampling
+                with self.ema_scope("Plotting Quantized Denoised"):
+                    samples, z_denoise_row = self.sample_log(cond=c,batch_size=N,ddim=use_ddim,
+                                                             ddim_steps=ddim_steps,eta=ddim_eta,
+                                                             quantize_denoised=True)
+                    # samples, z_denoise_row = self.sample(cond=c, batch_size=N, return_intermediates=True,
+                    #                                      quantize_denoised=True)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_x0_quantized"] = x_samples
+
+            if inpaint:
+                # make a simple center square
+                b, h, w = z.shape[0], z.shape[2], z.shape[3]
+                mask = torch.ones(N, h, w).to(self.device)
+                # zeros will be filled in
+                mask[:, h // 4:3 * h // 4, w // 4:3 * w // 4] = 0.
+                mask = mask[:, None, ...]
+                with self.ema_scope("Plotting Inpaint"):
+
+                    samples, _ = self.sample_log(cond=c,batch_size=N,ddim=use_ddim, eta=ddim_eta,
+                                                ddim_steps=ddim_steps, x0=z[:N], mask=mask)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_inpainting"] = x_samples
+                log["mask"] = mask
+
+                # outpaint
+                with self.ema_scope("Plotting Outpaint"):
+                    samples, _ = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,eta=ddim_eta,
+                                                ddim_steps=ddim_steps, x0=z[:N], mask=mask)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_outpainting"] = x_samples
+
+        if plot_progressive_rows:
+            with self.ema_scope("Plotting Progressives"):
+                img, progressives = self.progressive_denoising(c,
+                                                               shape=(self.channels, self.image_size, self.image_size),
+                                                               batch_size=N)
+            prog_row = self._get_denoise_row_from_list(progressives, desc="Progressive Generation")
+            log["progressive_row"] = prog_row
+
+        if return_keys:
+            if np.intersect1d(list(log.keys()), return_keys).shape[0] == 0:
+                return log
+            else:
+                return {key: log[key] for key in return_keys}
+        return log
+
+    def configure_optimizers(self):
+        lr = self.learning_rate
+        params = list(self.model.parameters())
+        if self.cond_stage_trainable:
+            print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
+            params = params + list(self.cond_stage_model.parameters())
+        if self.learn_logvar:
+            print('Diffusion model optimizing logvar')
+            params.append(self.logvar)
+        opt = torch.optim.AdamW(params, lr=lr)
+        if self.use_scheduler:
+            assert 'target' in self.scheduler_config
+            scheduler = instantiate_from_config(self.scheduler_config)
+
+            print("Setting up LambdaLR scheduler...")
+            scheduler = [
+                {
+                    'scheduler': LambdaLR(opt, lr_lambda=scheduler.schedule),
+                    'interval': 'step',
+                    'frequency': 1
+                }]
+            return [opt], scheduler
+        return opt
+
+    @torch.no_grad()
+    def to_rgb(self, x):
+        x = x.float()
+        if not hasattr(self, "colorize"):
+            self.colorize = torch.randn(3, x.shape[1], 1, 1).to(x)
+        x = nn.functional.conv2d(x, weight=self.colorize)
+        x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
+        return x
+    
+    def apply_model(self, x_noisy, t, cond, return_ids=False):
+
+        if isinstance(cond, dict):
+            # hybrid case, cond is exptected to be a dict
+            pass
+        else:
+            if not isinstance(cond, list):
+                cond = [cond]
+            key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
+            cond = {key: cond}
+
+        if hasattr(self, "split_input_params"):
+            assert len(cond) == 1  # todo can only deal with one conditioning atm
+            assert not return_ids  
+            ks = self.split_input_params["ks"]  # eg. (128, 128)
+            stride = self.split_input_params["stride"]  # eg. (64, 64)
+
+            h, w = x_noisy.shape[-2:]
+
+            fold, unfold, normalization, weighting = self.get_fold_unfold(x_noisy, ks, stride)
+
+            z = unfold(x_noisy)  # (bn, nc * prod(**ks), L)
+            # Reshape to img shape
+            z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
+            z_list = [z[:, :, :, :, i] for i in range(z.shape[-1])]
+
+            if self.cond_stage_key in ["image", "LR_image", "segmentation",
+                                       'bbox_img'] and self.model.conditioning_key:  # todo check for completeness
+                c_key = next(iter(cond.keys()))  # get key
+                c = next(iter(cond.values()))  # get value
+                assert (len(c) == 1)  # todo extend to list with more than one elem
+                c = c[0]  # get element
+
+                c = unfold(c)
+                c = c.view((c.shape[0], -1, ks[0], ks[1], c.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
+
+                cond_list = [{c_key: [c[:, :, :, :, i]]} for i in range(c.shape[-1])]
+
+            elif self.cond_stage_key == 'coordinates_bbox':
+                assert 'original_image_size' in self.split_input_params, 'BoudingBoxRescaling is missing original_image_size'
+
+                # assuming padding of unfold is always 0 and its dilation is always 1
+                n_patches_per_row = int((w - ks[0]) / stride[0] + 1)
+                full_img_h, full_img_w = self.split_input_params['original_image_size']
+                # as we are operating on latents, we need the factor from the original image size to the
+                # spatial latent size to properly rescale the crops for regenerating the bbox annotations
+                num_downs = self.first_stage_model.encoder.num_resolutions - 1
+                rescale_latent = 2 ** (num_downs)
+
+                # get top left postions of patches as conforming for the bbbox tokenizer, therefore we
+                # need to rescale the tl patch coordinates to be in between (0,1)
+                tl_patch_coordinates = [(rescale_latent * stride[0] * (patch_nr % n_patches_per_row) / full_img_w,
+                                         rescale_latent * stride[1] * (patch_nr // n_patches_per_row) / full_img_h)
+                                        for patch_nr in range(z.shape[-1])]
+
+                # patch_limits are tl_coord, width and height coordinates as (x_tl, y_tl, h, w)
+                patch_limits = [(x_tl, y_tl,
+                                 rescale_latent * ks[0] / full_img_w,
+                                 rescale_latent * ks[1] / full_img_h) for x_tl, y_tl in tl_patch_coordinates]
+                # patch_values = [(np.arange(x_tl,min(x_tl+ks, 1.)),np.arange(y_tl,min(y_tl+ks, 1.))) for x_tl, y_tl in tl_patch_coordinates]
+
+                # tokenize crop coordinates for the bounding boxes of the respective patches
+                patch_limits_tknzd = [torch.LongTensor(self.bbox_tokenizer._crop_encoder(bbox))[None].to(self.device)
+                                      for bbox in patch_limits]  # list of length l with tensors of shape (1, 2)
+                print(patch_limits_tknzd[0].shape)
+                # cut tknzd crop position from conditioning
+                assert isinstance(cond, dict), 'cond must be dict to be fed into model'
+                cut_cond = cond['c_crossattn'][0][..., :-2].to(self.device)
+                print(cut_cond.shape)
+
+                adapted_cond = torch.stack([torch.cat([cut_cond, p], dim=1) for p in patch_limits_tknzd])
+                adapted_cond = rearrange(adapted_cond, 'l b n -> (l b) n')
+                print(adapted_cond.shape)
+                adapted_cond = self.get_learned_conditioning(adapted_cond)
+                print(adapted_cond.shape)
+                adapted_cond = rearrange(adapted_cond, '(l b) n d -> l b n d', l=z.shape[-1])
+                print(adapted_cond.shape)
+
+                cond_list = [{'c_crossattn': [e]} for e in adapted_cond]
+
+            else:
+                cond_list = [cond for i in range(z.shape[-1])]  # Todo make this more efficient
+
+            # apply model by loop over crops
+            output_list = [self.model(z_list[i], t, **cond_list[i]) for i in range(z.shape[-1])]
+            assert not isinstance(output_list[0],
+                                  tuple)  # todo cant deal with multiple model outputs check this never happens
+
+            o = torch.stack(output_list, axis=-1)
+            o = o * weighting
+            # Reverse reshape to img shape
+            o = o.view((o.shape[0], -1, o.shape[-1]))  # (bn, nc * ks[0] * ks[1], L)
+            # stitch crops together
+            x_recon = fold(o) / normalization
+
+        else:
+            x_recon = self.model(x_noisy, t, **cond)
+
+        if isinstance(x_recon, tuple) and not return_ids:
+            return x_recon[0]
+        else:
+            return x_recon
+    
+    def q_posterior(self, x_start, x_t, t):
+        posterior_mean = (
+                extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start +
+                extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
+        )
+        posterior_variance = extract_into_tensor(self.posterior_variance, t, x_t.shape)
+        posterior_log_variance_clipped = extract_into_tensor(self.posterior_log_variance_clipped, t, x_t.shape)
+        return posterior_mean, posterior_variance, posterior_log_variance_clipped
